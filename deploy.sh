@@ -52,7 +52,11 @@ fi
 IPV4_REGIONS=("ewr" "mia" "ord") # Newark, Miami, Chicago - all in US region
 IPV6_REGION="lax"  # Los Angeles - also in US region
 PLAN="vc2-1c-1gb"  # Smallest plan (1 CPU, 1GB RAM) - sufficient for BGP/BIRD2
-OS_ID=387 # Ubuntu 20.04
+# Operating system selection
+# To use a different Ubuntu version, uncomment the desired OS_ID and comment the others
+OS_ID=1743 # Ubuntu 22.04 LTS x64
+# OS_ID=387  # Ubuntu 20.04 LTS x64
+# OS_ID=270  # Ubuntu 18.04 LTS x64
 
 # Function to create SSH key in Vultr account
 create_ssh_key_in_vultr() {
@@ -1065,7 +1069,13 @@ EOF
     
     # Install dependencies
     apt-get update
-    apt-get install -y iptables-persistent fail2ban ipset unattended-upgrades
+    
+    # Pre-set answers for iptables-persistent to avoid interactive prompts
+    echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
+    echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
+    
+    # Install packages
+    DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent fail2ban ipset unattended-upgrades
     
     # Configure unattended upgrades for security patches
     cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'APTCONF'
@@ -1433,7 +1443,13 @@ EOF
     
     # Install dependencies
     apt-get update
-    apt-get install -y iptables-persistent fail2ban ipset unattended-upgrades
+    
+    # Pre-set answers for iptables-persistent to avoid interactive prompts
+    echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
+    echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
+    
+    # Install packages
+    DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent fail2ban ipset unattended-upgrades
     
     # Configure unattended upgrades for security patches
     cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'APTCONF'
