@@ -8,10 +8,41 @@
 # - Maximized geographic placement within the Americas region (East Coast, Southeast, Midwest, West Coast)
 # - Reserved IPs assigned in the same region as required by Vultr
 # - Using smallest instance type (1 CPU, 1GB RAM) to minimize costs while maintaining functionality
+
+# Create a log file for deployment
+LOG_FILE="birdbgp_deploy_$(date +%Y%m%d_%H%M%S).log"
+echo "Starting deployment at $(date)" | tee "$LOG_FILE"
+
+# Log function to write to both console and log file
+log() {
+  local message="$1"
+  local level="${2:-INFO}"
+  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo "[$timestamp] [$level] $message" | tee -a "$LOG_FILE"
+}
+
+# Error handling function
+handle_error() {
+  local exit_code=$?
+  local line_number=$1
+  log "Error occurred at line $line_number, exit code: $exit_code" "ERROR"
+  log "Deployment failed. See $LOG_FILE for details." "ERROR"
+  exit $exit_code
+}
+
+# Set up error trap
+trap 'handle_error $LINENO' ERR
+
+# Enhanced error checking
+set -o pipefail  # Ensure pipeline errors are caught
+
+# Additional deployment details:
 # - 3 servers for IPv4 BGP with path prepending for failover priority
 # - 1 server for IPv6 BGP
 
-set -e
+# Create error and success counters for tracking deployment issues
+ERROR_COUNT=0
+SUCCESS_COUNT=0
 
 # Source environment variables
 if [ -f ".env" ]; then
@@ -1233,20 +1264,49 @@ deploy_ipv4_bird_config() {
   local config_file="${server_type}_bird.conf"
   local floating_ip=$3
   
-  echo "Deploying IPv4 BIRD configuration to $server_type server ($ipv4)..."
+  log "Deploying IPv4 BIRD configuration to $server_type server ($ipv4)..." "INFO"
   
   # Wait for SSH to be available
-  echo "Waiting for SSH to be available..."
+  log "Waiting for SSH to be available..." "INFO"
   while ! ssh $SSH_OPTIONS root@$ipv4 echo "SSH connection successful"; do
-    echo "Retrying SSH connection..."
+    log "Retrying SSH connection..." "INFO"
     sleep 10
   done
   
-  # Install RPKI tools and Routinator
+  # Define the log function and fix packages in the SSH session
+  ssh $SSH_OPTIONS root@$ipv4 << 'FIXPKG'
+# Define log function for remote server
+log() {
+  local message="$1"
+  local level="${2:-INFO}"
+  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo "[$timestamp] [$level] $message"
+}
+
+# Fix any interrupted package installations first
+log "Fixing package database before installing RPKI tools..." "INFO"
+export DEBIAN_FRONTEND=noninteractive
+dpkg --configure -a || log "Failed to fix package database, continuing anyway" "WARN"
+apt-get install -f -y || log "Failed to fix broken packages, continuing anyway" "WARN"
+FIXPKG
+
+  # Now install RPKI tools and Routinator
   ssh $SSH_OPTIONS root@$ipv4 << EOF
-    echo "Installing RPKI tools and Routinator..."
+    # Define log function for consistent output
+    log() {
+      local message="\$1"
+      local level="\${2:-INFO}"
+      local timestamp=\$(date +"%Y-%m-%d %H:%M:%S")
+      echo "[\$timestamp] [\$level] \$message"
+    }
+    
+    log "Installing RPKI tools and Routinator..." "INFO"
     apt-get update
-    apt-get install -y rtrlib-tools bird2-rpki-client
+    
+    # Try to install the RPKI tools
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y rtrlib-tools || log "Failed to install rtrlib-tools - may not be available in this Ubuntu version" "WARN"
+    apt-get install -y bird2-rpki-client || log "Failed to install bird2-rpki-client - may not be available in this Ubuntu version" "WARN"
     
     # Install Rust and build Routinator from source with ASPA support
     apt-get install -y curl gnupg build-essential
@@ -1304,13 +1364,39 @@ RPKICONF
 }
 SLURM
 
-    # Create a permissions for Routinator
-    chown -R routinator:routinator /etc/routinator
-
-    # Copy the provided ARIN TAL to the Routinator TAL directory
+    # Create permissions for Routinator
+    # First check if routinator user exists, if not create it
+    if ! id routinator &>/dev/null; then
+      log "Creating routinator user and group..." "INFO"
+      useradd -r -d /var/lib/routinator -s /bin/false routinator || log "Failed to create routinator user, using root instead" "WARN"
+    fi
+    
+    # Create directories with proper permissions
+    mkdir -p /etc/routinator
     mkdir -p /var/lib/routinator/tals
-    cp /home/normtodd/birdbgp/arin.tal /var/lib/routinator/tals/
-    chown -R routinator:routinator /var/lib/routinator
+    
+    # Try to set permissions, but continue if it fails
+    chown -R routinator:routinator /etc/routinator 2>/dev/null || log "Failed to set permissions on /etc/routinator, using current user" "WARN"
+    
+    # Download ARIN TAL directly from the source
+    log "Downloading ARIN TAL directly from ARIN..." "INFO"
+    mkdir -p /var/lib/routinator/tals
+    if curl -s --retry 3 --retry-delay 2 https://www.arin.net/resources/manage/rpki/arin-rfc7730.tal > /var/lib/routinator/tals/arin.tal; then
+      log "Successfully downloaded ARIN TAL" "INFO"
+    else
+      log "Failed to download ARIN TAL, will try alternate URL" "WARN"
+      # Try alternate URL as fallback
+      if curl -s --retry 3 --retry-delay 2 https://rpki.arin.net/tal/arin-rfc7730.tal > /var/lib/routinator/tals/arin.tal; then
+        log "Successfully downloaded ARIN TAL from alternate URL" "INFO"
+      else
+        log "All ARIN TAL download attempts failed. RPKI validation may not work correctly." "ERROR"
+        # Create an empty TAL file so Routinator can still start
+        echo "# Failed to download ARIN TAL, please add manually" > /var/lib/routinator/tals/arin.tal
+      fi
+    fi
+    
+    # Set permissions on routinator directories
+    chown -R routinator:routinator /var/lib/routinator 2>/dev/null || log "Failed to set permissions on /var/lib/routinator, using current user" "WARN"
     
     # Initialize Routinator - won't prompt for ARIN RPA as we provided the TAL directly
     routinator init
@@ -1368,18 +1454,41 @@ EOF
   # Copy BIRD configuration
   scp $SSH_OPTIONS "$config_file" root@$ipv4:/etc/bird/bird.conf
   
-  # Configure network, security, and start BIRD
+  # Define the log function within the SSH session
+  ssh $SSH_OPTIONS root@$ipv4 << 'SETUPLOG'
+# Define log function for remote server
+log() {
+  local message="$1"
+  local level="${2:-INFO}"
+  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo "[$timestamp] [$level] $message"
+}
+
+# Fix any interrupted package installations first
+log "Checking for and fixing interrupted package installations..." "INFO"
+dpkg --configure -a || log "Failed to fix package database, some installations may fail" "WARN"
+
+# Continue with configuration
+SETUPLOG
+
+  # Now proceed with the actual configuration
   ssh $SSH_OPTIONS root@$ipv4 << EOF
     # Create dummy interface
-    echo "Creating dummy interface..."
-    ip link add dummy1 type dummy || true
+    log "Creating dummy interface for BGP announcements..." "INFO"
+    ip link add dummy1 type dummy || log "Dummy interface already exists, continuing..." "WARN"
     ip link set dummy1 up
     
     # Configure IP routes
     # Extract the network part without the CIDR suffix, then append .1
     ip_network=$(echo ${OUR_IPV4_BGP_RANGE} | cut -d'/' -f1)
-    echo "Setting up dummy interface with IP: ${ip_network}.1/32"
-    ip addr add ${ip_network}.1/32 dev dummy1
+    if [ -z "$ip_network" ]; then
+      log "Failed to extract network address from ${OUR_IPV4_BGP_RANGE}" "ERROR"
+      log "Using fallback network address of 192.0.2.0" "WARN"
+      ip_network="192.0.2.0"
+    fi
+    
+    log "Setting up dummy interface with IP: ${ip_network}.1/32" "INFO"
+    ip addr add ${ip_network}.1/32 dev dummy1 || log "Failed to add IP to dummy interface, continuing..." "WARN"
     ip route add local ${OUR_IPV4_BGP_RANGE} dev lo
     
     # If floating IP is provided, configure it
@@ -1389,7 +1498,13 @@ EOF
     fi
     
     # ===== SECURITY SETUP =====
-    echo "Configuring security measures..."
+    log "Configuring security measures..." "INFO"
+    
+    # Ensure we have all necessary packages before continuing
+    apt-get update
+    
+    # Try to fix any broken packages
+    apt-get install -f -y || log "Failed to fix broken packages" "WARN"
     
     # Add SSH key for nt@infinitum-nihil.com if provided
     if [ ! -z "$NT_SSH_PUBLIC_KEY" ]; then
@@ -1401,16 +1516,29 @@ EOF
       echo "SSH key added successfully."
     fi
     
-    # Install dependencies
+    # Install dependencies 
     apt-get update
+    
+    # Fix any broken packages first
+    apt-get install -f -y
     
     # Pre-set answers for iptables-persistent to avoid interactive prompts
     export DEBIAN_FRONTEND=noninteractive
     echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
     echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
     
-    # Install packages with automatic yes to all prompts
-    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" iptables-persistent fail2ban ipset unattended-upgrades
+    # Install each package separately with error handling
+    log "Installing iptables-persistent..." "INFO"
+    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" iptables-persistent || log "Failed to install iptables-persistent" "ERROR"
+    
+    log "Installing fail2ban..." "INFO"
+    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" fail2ban || log "Failed to install fail2ban" "ERROR"
+    
+    log "Installing ipset..." "INFO"
+    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" ipset || log "Failed to install ipset" "ERROR"
+    
+    log "Installing unattended-upgrades..." "INFO"
+    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" unattended-upgrades || log "Failed to install unattended-upgrades" "ERROR"
     
     # Configure unattended upgrades for security patches
     cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'APTCONF'
@@ -1603,20 +1731,49 @@ deploy_ipv6_bird_config() {
   local config_file="${server_type}_bird.conf"
   local floating_ipv6=$3
   
-  echo "Deploying IPv6 BIRD configuration to $server_type server ($ipv4)..."
+  log "Deploying IPv6 BIRD configuration to $server_type server ($ipv4)..." "INFO"
   
   # Wait for SSH to be available
-  echo "Waiting for SSH to be available..."
+  log "Waiting for SSH to be available..." "INFO"
   while ! ssh $SSH_OPTIONS root@$ipv4 echo "SSH connection successful"; do
-    echo "Retrying SSH connection..."
+    log "Retrying SSH connection..." "INFO"
     sleep 10
   done
   
-  # Install RPKI tools and Routinator
+  # Define the log function and fix packages in the SSH session
+  ssh $SSH_OPTIONS root@$ipv4 << 'FIXPKG'
+# Define log function for remote server
+log() {
+  local message="$1"
+  local level="${2:-INFO}"
+  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo "[$timestamp] [$level] $message"
+}
+
+# Fix any interrupted package installations first
+log "Fixing package database before installing RPKI tools..." "INFO"
+export DEBIAN_FRONTEND=noninteractive
+dpkg --configure -a || log "Failed to fix package database, continuing anyway" "WARN"
+apt-get install -f -y || log "Failed to fix broken packages, continuing anyway" "WARN"
+FIXPKG
+
+  # Now install RPKI tools and Routinator
   ssh $SSH_OPTIONS root@$ipv4 << EOF
-    echo "Installing RPKI tools and Routinator..."
+    # Define log function for consistent output
+    log() {
+      local message="\$1"
+      local level="\${2:-INFO}"
+      local timestamp=\$(date +"%Y-%m-%d %H:%M:%S")
+      echo "[\$timestamp] [\$level] \$message"
+    }
+    
+    log "Installing RPKI tools and Routinator for IPv6..." "INFO"
     apt-get update
-    apt-get install -y rtrlib-tools bird2-rpki-client
+    
+    # Try to install the RPKI tools
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y rtrlib-tools || log "Failed to install rtrlib-tools - may not be available in this Ubuntu version" "WARN"
+    apt-get install -y bird2-rpki-client || log "Failed to install bird2-rpki-client - may not be available in this Ubuntu version" "WARN"
     
     # Install Rust and build Routinator from source with ASPA support
     apt-get install -y curl gnupg build-essential
@@ -1674,13 +1831,39 @@ RPKICONF
 }
 SLURM
 
-    # Create a permissions for Routinator
-    chown -R routinator:routinator /etc/routinator
-
-    # Copy the provided ARIN TAL to the Routinator TAL directory
+    # Create permissions for Routinator
+    # First check if routinator user exists, if not create it
+    if ! id routinator &>/dev/null; then
+      log "Creating routinator user and group..." "INFO"
+      useradd -r -d /var/lib/routinator -s /bin/false routinator || log "Failed to create routinator user, using root instead" "WARN"
+    fi
+    
+    # Create directories with proper permissions
+    mkdir -p /etc/routinator
     mkdir -p /var/lib/routinator/tals
-    cp /home/normtodd/birdbgp/arin.tal /var/lib/routinator/tals/
-    chown -R routinator:routinator /var/lib/routinator
+    
+    # Try to set permissions, but continue if it fails
+    chown -R routinator:routinator /etc/routinator 2>/dev/null || log "Failed to set permissions on /etc/routinator, using current user" "WARN"
+    
+    # Download ARIN TAL directly from the source
+    log "Downloading ARIN TAL directly from ARIN..." "INFO"
+    mkdir -p /var/lib/routinator/tals
+    if curl -s --retry 3 --retry-delay 2 https://www.arin.net/resources/manage/rpki/arin-rfc7730.tal > /var/lib/routinator/tals/arin.tal; then
+      log "Successfully downloaded ARIN TAL" "INFO"
+    else
+      log "Failed to download ARIN TAL, will try alternate URL" "WARN"
+      # Try alternate URL as fallback
+      if curl -s --retry 3 --retry-delay 2 https://rpki.arin.net/tal/arin-rfc7730.tal > /var/lib/routinator/tals/arin.tal; then
+        log "Successfully downloaded ARIN TAL from alternate URL" "INFO"
+      else
+        log "All ARIN TAL download attempts failed. RPKI validation may not work correctly." "ERROR"
+        # Create an empty TAL file so Routinator can still start
+        echo "# Failed to download ARIN TAL, please add manually" > /var/lib/routinator/tals/arin.tal
+      fi
+    fi
+    
+    # Set permissions on routinator directories
+    chown -R routinator:routinator /var/lib/routinator 2>/dev/null || log "Failed to set permissions on /var/lib/routinator, using current user" "WARN"
     
     # Initialize Routinator - won't prompt for ARIN RPA as we provided the TAL directly
     routinator init
@@ -1764,7 +1947,13 @@ EOF
     fi
     
     # ===== SECURITY SETUP =====
-    echo "Configuring security measures..."
+    log "Configuring security measures..." "INFO"
+    
+    # Ensure we have all necessary packages before continuing
+    apt-get update
+    
+    # Try to fix any broken packages
+    apt-get install -f -y || log "Failed to fix broken packages" "WARN"
     
     # Add SSH key for nt@infinitum-nihil.com if provided
     if [ ! -z "$NT_SSH_PUBLIC_KEY" ]; then
@@ -1776,16 +1965,29 @@ EOF
       echo "SSH key added successfully."
     fi
     
-    # Install dependencies
+    # Install dependencies 
     apt-get update
+    
+    # Fix any broken packages first
+    apt-get install -f -y
     
     # Pre-set answers for iptables-persistent to avoid interactive prompts
     export DEBIAN_FRONTEND=noninteractive
     echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
     echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
     
-    # Install packages with automatic yes to all prompts
-    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" iptables-persistent fail2ban ipset unattended-upgrades
+    # Install each package separately with error handling
+    log "Installing iptables-persistent..." "INFO"
+    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" iptables-persistent || log "Failed to install iptables-persistent" "ERROR"
+    
+    log "Installing fail2ban..." "INFO"
+    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" fail2ban || log "Failed to install fail2ban" "ERROR"
+    
+    log "Installing ipset..." "INFO"
+    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" ipset || log "Failed to install ipset" "ERROR"
+    
+    log "Installing unattended-upgrades..." "INFO"
+    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" unattended-upgrades || log "Failed to install unattended-upgrades" "ERROR"
     
     # Configure unattended upgrades for security patches
     cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'APTCONF'
