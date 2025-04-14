@@ -486,6 +486,37 @@ create_floating_ip() {
   
   if [ "$final_instance" = "$instance_id" ]; then
     echo "Verified: Floating IP $floating_ip is correctly attached to instance $instance_id"
+    
+    # According to Vultr, server must be restarted before the additional IP can be used
+    echo "Restarting instance for the reserved IP to take effect (Vultr requirement)..."
+    restart_response=$(curl -s -X POST "${VULTR_API_ENDPOINT}instances/$instance_id/reboot" \
+      -H "Authorization: Bearer ${VULTR_API_KEY}")
+    
+    echo "Restart response: $restart_response"
+    
+    # Wait for the restart to complete
+    echo "Waiting 60 seconds for instance restart to complete..."
+    sleep 60
+    
+    # Check instance status after restart
+    instance_status=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances/$instance_id" \
+      -H "Authorization: Bearer ${VULTR_API_KEY}" | grep -o '"status":"[^"]*' | cut -d'"' -f4)
+    
+    echo "Instance status after restart: $instance_status"
+    
+    # Wait for the instance to be fully ready again if needed
+    max_attempts=10
+    attempt=1
+    while [ "$instance_status" != "ok" ] && [ $attempt -le $max_attempts ]; do
+      echo "Instance not ready after restart (status: $instance_status). Waiting 10 seconds (attempt $attempt/$max_attempts)..."
+      sleep 10
+      instance_status=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances/$instance_id" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}" | grep -o '"status":"[^"]*' | cut -d'"' -f4)
+      echo "Updated instance status: $instance_status"
+      attempt=$((attempt + 1))
+    done
+    
+    echo "IP attachment and instance restart completed successfully."
     return 0
   else
     echo "Warning: Final verification shows floating IP is not attached to expected instance."
