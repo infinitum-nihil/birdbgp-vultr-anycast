@@ -1038,7 +1038,10 @@ EOF
     ip link set dummy1 up
     
     # Configure IP routes
-    ip addr add ${OUR_IPV4_BGP_RANGE%%/*}.1/32 dev dummy1
+    # Extract the network part without the CIDR suffix, then append .1
+    ip_network=$(echo ${OUR_IPV4_BGP_RANGE} | cut -d'/' -f1)
+    echo "Setting up dummy interface with IP: ${ip_network}.1/32"
+    ip addr add ${ip_network}.1/32 dev dummy1
     ip route add local ${OUR_IPV4_BGP_RANGE} dev lo
     
     # If floating IP is provided, configure it
