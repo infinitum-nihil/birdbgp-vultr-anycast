@@ -181,6 +181,7 @@ write_files:
 
 runcmd:
   # Configure iptables-persistent quietly
+  - 'export DEBIAN_FRONTEND=noninteractive'
   - 'echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections'
   - 'echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections'
   
@@ -188,9 +189,10 @@ runcmd:
   - 'ip link add dummy1 type dummy || true'
   - 'ip link set dummy1 up'
   
-  # Install CrowdSec
+  # Install CrowdSec with no interactive prompts
   - 'curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash'
-  - 'apt-get install -y crowdsec crowdsec-firewall-bouncer-iptables'
+  - 'UCF_FORCE_CONFFOLD=1 apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" crowdsec'
+  - 'UCF_FORCE_CONFFOLD=1 apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" crowdsec-firewall-bouncer-iptables'
   
   # Enable and start services
   - 'systemctl enable --now bird'
@@ -210,10 +212,10 @@ runcmd:
   - 'iptables -A INPUT -j DROP'
   - 'iptables-save > /etc/iptables/rules.v4'
   
-  # Configure CrowdSec with default collections
-  - 'cscli collections install crowdsecurity/linux'
-  - 'cscli collections install crowdsecurity/sshd'
-  - 'cscli collections install crowdsecurity/iptables'
+  # Configure CrowdSec with default collections (with yes to all prompts)
+  - 'yes | cscli collections install crowdsecurity/linux'
+  - 'yes | cscli collections install crowdsecurity/sshd'
+  - 'yes | cscli collections install crowdsecurity/iptables'
   - 'systemctl restart crowdsec'
   
   # Apply sysctl changes
@@ -337,6 +339,7 @@ write_files:
 
 runcmd:
   # Configure iptables-persistent quietly
+  - 'export DEBIAN_FRONTEND=noninteractive'
   - 'echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections'
   - 'echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections'
   
@@ -344,9 +347,10 @@ runcmd:
   - 'ip link add dummy1 type dummy || true'
   - 'ip link set dummy1 up'
   
-  # Install CrowdSec
+  # Install CrowdSec with no interactive prompts
   - 'curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash'
-  - 'apt-get install -y crowdsec crowdsec-firewall-bouncer-iptables'
+  - 'UCF_FORCE_CONFFOLD=1 apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" crowdsec'
+  - 'UCF_FORCE_CONFFOLD=1 apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" crowdsec-firewall-bouncer-iptables'
   
   # Enable and start services
   - 'systemctl enable --now bird'
@@ -376,10 +380,10 @@ runcmd:
   - 'ip6tables -A INPUT -j DROP'
   - 'ip6tables-save > /etc/iptables/rules.v6'
   
-  # Configure CrowdSec with default collections
-  - 'cscli collections install crowdsecurity/linux'
-  - 'cscli collections install crowdsecurity/sshd'
-  - 'cscli collections install crowdsecurity/iptables'
+  # Configure CrowdSec with default collections (with yes to all prompts)
+  - 'yes | cscli collections install crowdsecurity/linux'
+  - 'yes | cscli collections install crowdsecurity/sshd'
+  - 'yes | cscli collections install crowdsecurity/iptables'
   - 'systemctl restart crowdsec'
   
   # Apply sysctl changes
@@ -1401,11 +1405,12 @@ EOF
     apt-get update
     
     # Pre-set answers for iptables-persistent to avoid interactive prompts
+    export DEBIAN_FRONTEND=noninteractive
     echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
     echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
     
-    # Install packages
-    DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent fail2ban ipset unattended-upgrades
+    # Install packages with automatic yes to all prompts
+    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" iptables-persistent fail2ban ipset unattended-upgrades
     
     # Configure unattended upgrades for security patches
     cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'APTCONF'
@@ -1775,11 +1780,12 @@ EOF
     apt-get update
     
     # Pre-set answers for iptables-persistent to avoid interactive prompts
+    export DEBIAN_FRONTEND=noninteractive
     echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
     echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
     
-    # Install packages
-    DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent fail2ban ipset unattended-upgrades
+    # Install packages with automatic yes to all prompts
+    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" iptables-persistent fail2ban ipset unattended-upgrades
     
     # Configure unattended upgrades for security patches
     cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'APTCONF'
