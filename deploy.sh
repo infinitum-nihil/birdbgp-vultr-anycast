@@ -58,6 +58,336 @@ OS_ID=1743 # Ubuntu 22.04 LTS x64
 # OS_ID=387  # Ubuntu 20.04 LTS x64
 # OS_ID=270  # Ubuntu 18.04 LTS x64
 
+# Load cloud-init setting from .env with default to "true"
+USE_CLOUD_INIT=${USE_CLOUD_INIT:-true}
+
+# Function to generate cloud-init configuration
+generate_cloud_init_config() {
+  local ipv6_enabled=$1
+  
+  # If cloud-init is not enabled, return the simple bash script
+  if [ "$USE_CLOUD_INIT" != "true" ]; then
+    echo "IyEvYmluL2Jhc2gKYXB0LWdldCB1cGRhdGUgJiYgYXB0LWdldCBpbnN0YWxsIC15IGJpcmQyCg=="
+    return
+  fi
+  
+  # IPv4 BGP instance cloud-init
+  if [ "$ipv6_enabled" = "false" ]; then
+    cat << 'CLOUDINIT' | base64 -w 0
+#cloud-config
+package_update: true
+package_upgrade: true
+
+apt:
+  sources:
+    bird2:
+      source: "ppa:cz.nic-labs/bird"
+
+packages:
+  - bird2
+  - fail2ban
+  - iptables-persistent
+  - ipset
+  - unattended-upgrades
+  - curl
+  - gnupg2
+  - build-essential
+  - net-tools
+
+write_files:
+  - path: /etc/bird/bird.conf
+    owner: bird:bird
+    permissions: '0644'
+    content: |
+      # This config will be replaced during deployment
+      log syslog all;
+      router id 127.0.0.1;
+      protocol device { scan time 10; }
+
+  - path: /etc/sysctl.d/99-bgp-security.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # BGP security settings
+      net.ipv4.conf.all.rp_filter=0
+      net.ipv4.conf.default.rp_filter=0
+      net.ipv4.conf.lo.rp_filter=0
+      net.ipv4.conf.all.accept_redirects=0
+      net.ipv4.conf.default.accept_redirects=0
+      net.ipv4.conf.all.secure_redirects=0
+      net.ipv4.conf.default.secure_redirects=0
+      net.ipv4.conf.all.send_redirects=0
+      net.ipv4.conf.default.send_redirects=0
+      net.ipv4.conf.all.accept_source_route=0
+      net.ipv4.conf.default.accept_source_route=0
+      net.ipv4.tcp_syncookies=1
+      net.ipv4.icmp_echo_ignore_broadcasts=1
+      net.ipv4.icmp_ignore_bogus_error_responses=1
+
+  - path: /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root:root
+    permissions: '0644'
+    content: |
+      Unattended-Upgrade::Allowed-Origins {
+        "${distro_id}:${distro_codename}";
+        "${distro_id}:${distro_codename}-security";
+        "${distro_id}ESM:${distro_codename}";
+      };
+      Unattended-Upgrade::Package-Blacklist {
+      };
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "02:00";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::SyslogEnable "true";
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root:root
+    permissions: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+  - path: /etc/fail2ban/jail.local
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [DEFAULT]
+      bantime = 86400
+      findtime = 3600
+      maxretry = 5
+      banaction = iptables-multiport
+
+      [sshd]
+      enabled = true
+      port = ssh
+      filter = sshd
+      logpath = /var/log/auth.log
+      maxretry = 3
+
+  - path: /etc/ssh/sshd_config.d/10-security.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # SSH hardening
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+      X11Forwarding no
+      MaxAuthTries 3
+      LoginGraceTime 20
+      AllowAgentForwarding no
+      AllowTcpForwarding no
+      PermitEmptyPasswords no
+
+runcmd:
+  # Configure iptables-persistent quietly
+  - 'echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections'
+  - 'echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections'
+  
+  # Create dummy interface for BGP announcements
+  - 'ip link add dummy1 type dummy || true'
+  - 'ip link set dummy1 up'
+  
+  # Install CrowdSec
+  - 'curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash'
+  - 'apt-get install -y crowdsec crowdsec-firewall-bouncer-iptables'
+  
+  # Enable and start services
+  - 'systemctl enable --now bird'
+  - 'systemctl enable --now fail2ban'
+  - 'systemctl enable --now unattended-upgrades'
+  - 'systemctl enable --now iptables-persistent'
+  - 'systemctl enable --now crowdsec'
+  - 'systemctl enable --now crowdsec-firewall-bouncer'
+  
+  # Setup basic firewall rules
+  - 'iptables -F'
+  - 'iptables -A INPUT -i lo -j ACCEPT'
+  - 'iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT'
+  - 'iptables -A INPUT -p tcp --dport 22 -j ACCEPT'
+  - 'iptables -A INPUT -p tcp --dport 179 -j ACCEPT'
+  - 'iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT'
+  - 'iptables -A INPUT -j DROP'
+  - 'iptables-save > /etc/iptables/rules.v4'
+  
+  # Configure CrowdSec with default collections
+  - 'cscli collections install crowdsecurity/linux'
+  - 'cscli collections install crowdsecurity/sshd'
+  - 'cscli collections install crowdsecurity/iptables'
+  - 'systemctl restart crowdsec'
+  
+  # Apply sysctl changes
+  - 'sysctl -p /etc/sysctl.d/99-bgp-security.conf'
+CLOUDINIT
+  # IPv6 BGP instance cloud-init
+  else
+    cat << 'CLOUDINIT6' | base64 -w 0
+#cloud-config
+package_update: true
+package_upgrade: true
+
+apt:
+  sources:
+    bird2:
+      source: "ppa:cz.nic-labs/bird"
+
+packages:
+  - bird2
+  - fail2ban
+  - iptables-persistent
+  - ipset
+  - unattended-upgrades
+  - curl
+  - gnupg2
+  - build-essential
+  - net-tools
+
+write_files:
+  - path: /etc/bird/bird.conf
+    owner: bird:bird
+    permissions: '0644'
+    content: |
+      # This config will be replaced during deployment
+      log syslog all;
+      router id 127.0.0.1;
+      protocol device { scan time 10; }
+
+  - path: /etc/sysctl.d/99-bgp-security.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # BGP security settings
+      net.ipv4.conf.all.rp_filter=0
+      net.ipv4.conf.default.rp_filter=0
+      net.ipv4.conf.lo.rp_filter=0
+      net.ipv4.conf.all.accept_redirects=0
+      net.ipv4.conf.default.accept_redirects=0
+      net.ipv4.conf.all.secure_redirects=0
+      net.ipv4.conf.default.secure_redirects=0
+      net.ipv4.conf.all.send_redirects=0
+      net.ipv4.conf.default.send_redirects=0
+      net.ipv4.conf.all.accept_source_route=0
+      net.ipv4.conf.default.accept_source_route=0
+      net.ipv4.tcp_syncookies=1
+      net.ipv4.icmp_echo_ignore_broadcasts=1
+      net.ipv4.icmp_ignore_bogus_error_responses=1
+      
+      # IPv6 specific settings
+      net.ipv6.conf.all.accept_redirects=0
+      net.ipv6.conf.default.accept_redirects=0
+      net.ipv6.conf.all.accept_source_route=0
+      net.ipv6.conf.default.accept_source_route=0
+      net.ipv6.conf.all.forwarding=0
+      net.ipv6.conf.default.forwarding=0
+
+  - path: /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root:root
+    permissions: '0644'
+    content: |
+      Unattended-Upgrade::Allowed-Origins {
+        "${distro_id}:${distro_codename}";
+        "${distro_id}:${distro_codename}-security";
+        "${distro_id}ESM:${distro_codename}";
+      };
+      Unattended-Upgrade::Package-Blacklist {
+      };
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "02:00";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::SyslogEnable "true";
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root:root
+    permissions: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+  - path: /etc/fail2ban/jail.local
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [DEFAULT]
+      bantime = 86400
+      findtime = 3600
+      maxretry = 5
+      banaction = iptables-multiport
+
+      [sshd]
+      enabled = true
+      port = ssh
+      filter = sshd
+      logpath = /var/log/auth.log
+      maxretry = 3
+
+  - path: /etc/ssh/sshd_config.d/10-security.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # SSH hardening
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+      X11Forwarding no
+      MaxAuthTries 3
+      LoginGraceTime 20
+      AllowAgentForwarding no
+      AllowTcpForwarding no
+      PermitEmptyPasswords no
+
+runcmd:
+  # Configure iptables-persistent quietly
+  - 'echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections'
+  - 'echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections'
+  
+  # Create dummy interface for BGP announcements
+  - 'ip link add dummy1 type dummy || true'
+  - 'ip link set dummy1 up'
+  
+  # Install CrowdSec
+  - 'curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash'
+  - 'apt-get install -y crowdsec crowdsec-firewall-bouncer-iptables'
+  
+  # Enable and start services
+  - 'systemctl enable --now bird'
+  - 'systemctl enable --now fail2ban'
+  - 'systemctl enable --now unattended-upgrades'
+  - 'systemctl enable --now iptables-persistent'
+  - 'systemctl enable --now crowdsec'
+  - 'systemctl enable --now crowdsec-firewall-bouncer'
+  
+  # Setup basic firewall rules for IPv4
+  - 'iptables -F'
+  - 'iptables -A INPUT -i lo -j ACCEPT'
+  - 'iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT'
+  - 'iptables -A INPUT -p tcp --dport 22 -j ACCEPT'
+  - 'iptables -A INPUT -p tcp --dport 179 -j ACCEPT'
+  - 'iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT'
+  - 'iptables -A INPUT -j DROP'
+  - 'iptables-save > /etc/iptables/rules.v4'
+  
+  # Setup basic firewall rules for IPv6
+  - 'ip6tables -F'
+  - 'ip6tables -A INPUT -i lo -j ACCEPT'
+  - 'ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT'
+  - 'ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT'
+  - 'ip6tables -A INPUT -p tcp --dport 179 -j ACCEPT'
+  - 'ip6tables -A INPUT -p ipv6-icmp -j ACCEPT'
+  - 'ip6tables -A INPUT -j DROP'
+  - 'ip6tables-save > /etc/iptables/rules.v6'
+  
+  # Configure CrowdSec with default collections
+  - 'cscli collections install crowdsecurity/linux'
+  - 'cscli collections install crowdsecurity/sshd'
+  - 'cscli collections install crowdsecurity/iptables'
+  - 'systemctl restart crowdsec'
+  
+  # Apply sysctl changes
+  - 'sysctl -p /etc/sysctl.d/99-bgp-security.conf'
+CLOUDINIT6
+  fi
+}
+
 # Function to create SSH key in Vultr account
 create_ssh_key_in_vultr() {
   # Check if we have a path to the SSH public key file
@@ -158,7 +488,7 @@ create_instance() {
         \"os_id\": $OS_ID,
         \"enable_ipv6\": $ipv6_enabled,
         \"tags\": [\"bgp\", \"priority-$priority\"],
-        \"user_data\": \"IyEvYmluL2Jhc2gKYXB0LWdldCB1cGRhdGUgJiYgYXB0LWdldCBpbnN0YWxsIC15IGJpcmQyCg==\"
+        \"user_data\": \"$(generate_cloud_init_config $ipv6_enabled)\"
       }")
   else
     echo "Using SSH key ID: $ssh_key_id for instance deployment"
@@ -175,7 +505,7 @@ create_instance() {
         \"enable_ipv6\": $ipv6_enabled,
         \"tags\": [\"bgp\", \"priority-$priority\"],
         \"sshkey_id\": [\"$ssh_key_id\"],
-        \"user_data\": \"IyEvYmluL2Jhc2gKYXB0LWdldCB1cGRhdGUgJiYgYXB0LWdldCBpbnN0YWxsIC15IGJpcmQyCg==\"
+        \"user_data\": \"$(generate_cloud_init_config $ipv6_enabled)\"
       }")
   fi
   
