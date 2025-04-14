@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<!-- saved from url=(0037)https://as51019.com/posts/aspa-bird2/ -->
+<html lang="en" data-google-analytics-opt-out=""><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<meta name="generator" content="Hugo 0.118.2">
+  
+    <title>ASPA path validation in BIRD2 with Routinator and TypeScript :: AS51019</title>
+  
+  
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="AS51019 personal research/education network, with a sprinkle of silliness and some feline friends 😺">
+<meta name="keywords" content="">
+
+  <meta name="robots" content="noodp">
+
+<link rel="canonical" href="https://as51019.com/">
+
+
+
+
+
+
+  
+  
+  
+  
+  
+  <link rel="stylesheet" href="./ASPA path validation in BIRD2 with Routinator and TypeScript __ AS51019_files/styles.css">
+
+
+
+
+
+
+
+  <link rel="shortcut icon" href="https://as51019.com/img/theme-colors/blue.png">
+  <link rel="apple-touch-icon" href="https://as51019.com/img/theme-colors/blue.png">
+
+
+
+<meta name="twitter:card" content="summary">
+
+  
+    <meta name="twitter:site" content="">
+  
+    <meta name="twitter:creator" content="">
+
+
+
+<meta property="og:locale" content="en">
+<meta property="og:type" content="website">
+<meta property="og:title" content="AS51019">
+<meta property="og:description" content="AS51019 personal research/education network, with a sprinkle of silliness and some feline friends 😺">
+<meta property="og:url" content="https://as51019.com/">
+<meta property="og:site_name" content="AS51019">
+
+  
+    <meta property="og:image" content="https://as51019.com/img/favicon/blue.png">
+  
+
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="627">
+
+
+
+
+
+  <link href="https://as51019.com/index.xml" rel="alternate" type="application/rss+xml" title="AS51019">
+
+
+
+
+
+
+<script type="module" defer="">
+    import { polyfillCountryFlagEmojis } from "https://cdn.skypack.dev/country-flag-emoji-polyfill";
+    polyfillCountryFlagEmojis();
+</script>
+
+
+<script src="./ASPA path validation in BIRD2 with Routinator and TypeScript __ AS51019_files/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
+
+
+
+
+
+<style>                      .htmx-indicator{opacity:0}                      .htmx-request .htmx-indicator{opacity:1; transition: opacity 200ms ease-in;}                      .htmx-request.htmx-indicator{opacity:1; transition: opacity 200ms ease-in;}                    </style></head>
+<body class="blue" hx-boost="true">
+
+
+<div class="container headings--one-size">
+
+  <header class="header">
+  <div class="header__inner">
+    <div class="header__logo">
+      <a href="https://as51019.com/">
+  <div class="logo">
+    
+    <img src="./ASPA path validation in BIRD2 with Routinator and TypeScript __ AS51019_files/as51019-clean.min.png" alt="AS51019 uwu logo" data-maxres-src="/as51019-clean.png">
+  </div>
+</a>
+
+    </div>
+    
+      <ul class="menu menu--mobile">
+  <li class="menu__trigger">Menu&nbsp;▾</li>
+  <li>
+    <ul class="menu__dropdown">
+      
+        
+          <li><a href="https://as51019.com/about">About</a></li>
+        
+      
+        
+          <li><a href="https://as51019.com/communities">BGP communities</a></li>
+        
+      
+        
+          <li><a href="https://as51019.com/presence">Presence</a></li>
+        
+      
+      
+    </ul>
+  </li>
+</ul>
+
+    
+    
+  </div>
+  
+    <nav class="navigation-menu">
+  <ul class="navigation-menu__inner menu--desktop">
+    
+      
+        
+          <li><a href="https://as51019.com/about">About</a></li>
+        
+      
+        
+          <li><a href="https://as51019.com/communities">BGP communities</a></li>
+        
+      
+      
+        <li>
+          <ul class="menu">
+            <li class="menu__trigger">Show more&nbsp;▾</li>
+            <li>
+              <ul class="menu__dropdown">
+                
+                  
+                    <li><a href="https://as51019.com/presence">Presence</a></li>
+                  
+                
+              </ul>
+            </li>
+          </ul>
+        </li>
+      
+    
+  </ul>
+</nav>
+
+  
+</header>
+
+
+  <div class="content">
+    
+<article class="post">
+  <h1 class="post-title">
+    <a href="https://as51019.com/posts/aspa-bird2/">ASPA path validation in BIRD2 with Routinator and TypeScript</a>
+  </h1>
+  <div class="post-meta"><time class="post-date">2024-05-02</time><span class="post-author">Kjartan Hrafnkelsson</span></div>
+
+  
+    <span class="post-tags">
+      
+      #<a href="https://as51019.com/tags/routing-security/">routing security</a>&nbsp;
+      
+      #<a href="https://as51019.com/tags/rpki/">rpki</a>&nbsp;
+      
+      #<a href="https://as51019.com/tags/aspa/">aspa</a>&nbsp;
+      
+    </span>
+  
+  
+
+
+  
+
+  <div class="post-content"><div>
+        <p>Recently (or not so recently?) some RFCs were published on the topic of a new standard in routing security. This is the ASPA (Autonomous System Provider Authorization) Objects system.</p>
+<p>Even more recently <a href="https://manrs.org/2023/02/unpacking-the-first-route-leak-prevented-by-aspa/">the first route leak prevented by ASPA</a> ocurred, in february 2023.</p>
+<p>I thought it might be fun to explore if we could achieve the same thing, only with BIRD2, some open source tools, and a bit of TypeScript. So let’s dive in!</p>
+<h1 id="rpki-client">rpki-client<a href="https://as51019.com/posts/aspa-bird2/#rpki-client" class="hanchor" arialabel="Anchor">⌗</a> </h1>
+<p>Initially my intuition for this was to use <code>rpki-client</code> as I had seen this tool used by Job Snijders and other big names in the “routing security space”.</p>
+<p>The maintainers of <code>rpki-client</code> also happened to publish <a href="https://console.rpki-client.org/">a website</a> showing dumps given by <code>rpki-client</code> at certain intervals in a web-accessible form. <a href="https://console.rpki-client.org/aspa.html">There even is an ASPA page!</a>. Cool!</p>
+<p>Unfortunately I only ran into issues with <code>rpki-client</code>. It’d do funky stuff like not being able to connect to most repos and run out of memory, for whatever reason.</p>
+<p>So I changed course.</p>
+<h1 id="routinator">Routinator<a href="https://as51019.com/posts/aspa-bird2/#routinator" class="hanchor" arialabel="Anchor">⌗</a> </h1>
+<p>When I was doing this I happened to be in a call in the <a href="https://discord.gg/ipv6">Network: IPv6 Discord</a> where Lee, a comrade from the networking space, pointed out that NLnet’s Routinator could do ASPA. Indeed, <a href="https://routinator.docs.nlnetlabs.nl/en/stable/advanced-features.html#aspa">it can</a> though it requires some modification.</p>
+<p>To do this we have to follow <a href="https://routinator.docs.nlnetlabs.nl/en/stable/building.html">Routinator’s guide for compiling from source</a>. This is so we can build the software with the feature flag that enables ASPA.</p>
+<p>Luckily this is pretty simple and boils down to running the correct command after installing rust on your system:</p>
+<div class="highlight"><div class="code-toolbar"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;" class=" language-bash"><code class=" language-bash" data-lang="bash"><span class="token comment"># some build tools</span>
+<span class="token function">apt</span> <span class="token function">install</span> build-essential
+
+<span class="token comment"># install rust (please dont pipe to bash in production)</span>
+<span class="token function">curl</span> --proto <span class="token string">'=https'</span> --tlsv1.2 -sSf https://sh.rustup.rs <span class="token operator">|</span> <span class="token function">sh</span>
+
+<span class="token comment"># add cargo to $PATH (note the period, it's important)</span>
+<span class="token builtin class-name">.</span> <span class="token string">"<span class="token environment constant">$HOME</span>/.cargo/env"</span>
+
+<span class="token comment"># build routinator with aspa</span>
+cargo <span class="token function">install</span> --locked --features aspa routinator
+</code></pre><div class="toolbar"><div class="toolbar-item"><button class="copy-to-clipboard-button" type="button" data-copy-state="copy"><span>Copy</span></button></div></div></div></div><p>Now we can run <code>routinator</code> with the <code>--enable-aspa</code> flag. Cool!</p>
+<h1 id="getting-current-aspa-data">Getting current ASPA data<a href="https://as51019.com/posts/aspa-bird2/#getting-current-aspa-data" class="hanchor" arialabel="Anchor">⌗</a> </h1>
+<p>Now, to do anything useful here we have to retrieve all current ASPA ASAs (I think these are like certificates?) from the RPKI publication servers around the world.</p>
+<p>Unfortunately, since this proposed standard is so new (and not even accepted yet - for the record) there exists no TCP transport mechanism (and certainly no implementation for it in BIRD2) to import ASPA data into a routing daemon. Instead we’ll have to move the data ourselves and make it work with BIRD2 ourselves.</p>
+<p>Routinator makes this <em>really easy</em> and lets us output to JSON, just what we need to do some scripting with Deno later:</p>
+<div class="highlight"><div class="code-toolbar"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;" class=" language-bash"><code class=" language-bash" data-lang="bash">routinator --enable-aspa vrps -f json -o dump.json --no-route-origins --no-router-keys
+</code></pre><div class="toolbar"><div class="toolbar-item"><button class="copy-to-clipboard-button" type="button" data-copy-state="copy"><span>Copy</span></button></div></div></div></div><p>What’s happening here is quite simple. We run <code>routinator</code> with the <code>--enable-aspa</code> flag to use ASPA features. Then we run the <code>vrps</code> subcommand and pass the following options to it:</p>
+<ul>
+<li><code>-f json</code> - output to JSON format.</li>
+<li><code>-o dump.json</code> - write the output to a new file called <code>dump.json</code>.</li>
+<li><code>--no-route-origins</code> exclude ROAs..</li>
+<li><code>--no-router-keys</code> exclude router keys.</li>
+</ul>
+<p>This command does take a while to run, so it probably fits in nicely as a cronjob. But once it finishes we get a file that looks <a href="https://as51019.com/posts/aspa-bird2/dump.json">something like this</a>.</p>
+<p>Now we just have to use it.</p>
+<h1 id="writing-a-filter-function-for-bird2">Writing a filter function for BIRD2<a href="https://as51019.com/posts/aspa-bird2/#writing-a-filter-function-for-bird2" class="hanchor" arialabel="Anchor">⌗</a> </h1>
+<p>I’ll be the first to admit to being no BIRD expert but I do have a few tricks up my sleeve. AS path filtering is one of them.</p>
+<p>The filter (or I guess conditional) that makes what I want to achieve possible is the following:</p>
+<pre tabindex="0"><code>bgp_path ~ [= * ASN * =]
+</code></pre><p>In summary it will return true if the specified ASN exists within the AS path. You can also pass multiple ASNs to it and check for order:</p>
+<pre tabindex="0"><code>bgp_path ~ [= * ASN1 ASN2 * =] )
+</code></pre><p>In this example, <code>ASN1</code> would be <code>ASN2</code>’s permitted carrier (“provider” in ASPA speak).</p>
+<p>Using these two conditions we can quite easily create a functional, but rather sloppy, filter function for published ASAs.</p>
+<p>The pseudocode looks a little like this:</p>
+<div class="highlight"><div class="code-toolbar"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;" class=" language-java"><code class=" language-java" data-lang="java"><span class="token keyword keyword-boolean">boolean</span> is aspa <span class="token function">valid</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>asa publisher asn in path<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+        <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>provider1 asn before asa publisher asn in path<span class="token punctuation">)</span> <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+        <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>provider2 asn before asa publisher asn in path<span class="token punctuation">)</span> <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+        <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>providerN asn before asa publisher asn in path<span class="token punctuation">)</span> <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+
+        <span class="token keyword keyword-return">return</span> <span class="token boolean">false</span><span class="token punctuation">;</span> 
+    <span class="token punctuation">}</span>
+
+    <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+<span class="token punctuation">}</span>
+</code></pre><div class="toolbar"><div class="toolbar-item"><button class="copy-to-clipboard-button" type="button" data-copy-state="copy"><span>Copy</span></button></div></div></div></div><p>I’m sure this code could be improved for performance and efficiency - my online mates already seem to think so - but this will work for our purposes for now.</p>
+<h1 id="generating-the-filter-function">Generating the filter function<a href="https://as51019.com/posts/aspa-bird2/#generating-the-filter-function" class="hanchor" arialabel="Anchor">⌗</a> </h1>
+<p>I chose to write <a href="https://github.com/kjartanhr/routinator-aspa-json-to-bird2">a TypeScript program</a> with Deno to achieve what I’d like to do here. Deno also conveniently allows you to “compile” (really it’s just bundling) the program to a binary that can run portably, which is handy. Though the binary does end up being around 130MB in size. Yikes!</p>
+<p>The program’s 100~ lines come mostly from error handling and CLI flag boilerplate. The actual logic is 14 lines consisting of a for loop with a nested one inside it:</p>
+<div class="highlight"><div class="code-toolbar"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;" class=" language-typescript"><code class=" language-typescript" data-lang="typescript"><span class="token keyword keyword-let">let</span> txt <span class="token operator">=</span> <span class="token string">""</span><span class="token punctuation">;</span>
+<span class="token keyword keyword-for">for</span> <span class="token punctuation">(</span><span class="token keyword keyword-const">const</span> <span class="token punctuation">{</span>customer<span class="token punctuation">,</span> providers<span class="token punctuation">}</span> <span class="token keyword keyword-of">of</span> aspas<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+    <span class="token keyword keyword-const">const</span> asn <span class="token operator">=</span> customer<span class="token punctuation">.</span><span class="token function">replace</span><span class="token punctuation">(</span><span class="token constant">LEADING_AS</span><span class="token punctuation">,</span> <span class="token string">''</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+    txt <span class="token operator">+=</span> <span class="token template-string"><span class="token template-punctuation string">`</span><span class="token string">   # does the AS path include </span><span class="token interpolation"><span class="token interpolation-punctuation punctuation">${</span>customer<span class="token interpolation-punctuation punctuation">}</span></span><span class="token string">?\n</span><span class="token template-punctuation string">`</span></span>
+    txt <span class="token operator">+=</span> <span class="token template-string"><span class="token template-punctuation string">`</span><span class="token string">   if (bgp_path ~ [= * </span><span class="token interpolation"><span class="token interpolation-punctuation punctuation">${</span>asn<span class="token interpolation-punctuation punctuation">}</span></span><span class="token string"> * =]) then {\n</span><span class="token template-punctuation string">`</span></span><span class="token punctuation">;</span>
+    txt <span class="token operator">+=</span> <span class="token template-string"><span class="token template-punctuation string">`</span><span class="token string">       # does the AS path include [carrier's asn, </span><span class="token interpolation"><span class="token interpolation-punctuation punctuation">${</span>customer<span class="token interpolation-punctuation punctuation">}</span></span><span class="token string">]?\n</span><span class="token template-punctuation string">`</span></span>
+    <span class="token keyword keyword-for">for</span> <span class="token punctuation">(</span><span class="token keyword keyword-const">const</span> provider <span class="token keyword keyword-of">of</span> providers<span class="token punctuation">)</span> <span class="token punctuation">{</span>
+        <span class="token keyword keyword-const">const</span> carrier <span class="token operator">=</span> provider<span class="token punctuation">.</span><span class="token function">replace</span><span class="token punctuation">(</span><span class="token constant">LEADING_AS</span><span class="token punctuation">,</span> <span class="token string">''</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+        
+        txt <span class="token operator">+=</span> <span class="token template-string"><span class="token template-punctuation string">`</span><span class="token string">       if (bgp_path ~ [= * </span><span class="token interpolation"><span class="token interpolation-punctuation punctuation">${</span>carrier<span class="token interpolation-punctuation punctuation">}</span></span><span class="token string"> </span><span class="token interpolation"><span class="token interpolation-punctuation punctuation">${</span>asn<span class="token interpolation-punctuation punctuation">}</span></span><span class="token string"> * =]) then return true;\n</span><span class="token template-punctuation string">`</span></span><span class="token punctuation">;</span>
+    <span class="token punctuation">}</span>
+    txt <span class="token operator">+=</span> <span class="token string">'       return false;\n'</span><span class="token punctuation">;</span>
+    txt <span class="token operator">+=</span> <span class="token string">'   }\n\n'</span>
+<span class="token punctuation">}</span>
+</code></pre><div class="toolbar"><div class="toolbar-item"><button class="copy-to-clipboard-button" type="button" data-copy-state="copy"><span>Copy</span></button></div></div></div></div><p>There are a few more lines of boilerplate but you get the gist. The resulting function definition you get from running the program looks a little like this:</p>
+<div class="highlight"><div class="code-toolbar"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;" class=" language-rust"><code class=" language-rust" data-lang="rust">function <span class="token function">is_aspa_valid</span> <span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">{</span>
+   # does the <span class="token constant">AS</span> path include <span class="token constant">AS945</span><span class="token operator">?</span>
+   <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>bgp_path ~ <span class="token punctuation">[</span><span class="token operator">=</span> <span class="token operator">*</span> <span class="token number">945</span> <span class="token operator">*</span> <span class="token operator">=</span><span class="token punctuation">]</span><span class="token punctuation">)</span> then <span class="token punctuation">{</span>
+       # does the <span class="token constant">AS</span> path include <span class="token punctuation">[</span>carrier<span class="token lifetime-annotation symbol">'s</span> asn<span class="token punctuation">,</span> <span class="token constant">AS945</span><span class="token punctuation">]</span><span class="token operator">?</span>
+       <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>bgp_path ~ <span class="token punctuation">[</span><span class="token operator">=</span> <span class="token operator">*</span> <span class="token number">174</span> <span class="token number">945</span> <span class="token operator">*</span> <span class="token operator">=</span><span class="token punctuation">]</span><span class="token punctuation">)</span> then <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+       <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>bgp_path ~ <span class="token punctuation">[</span><span class="token operator">=</span> <span class="token operator">*</span> <span class="token number">1299</span> <span class="token number">945</span> <span class="token operator">*</span> <span class="token operator">=</span><span class="token punctuation">]</span><span class="token punctuation">)</span> then <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+       <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>bgp_path ~ <span class="token punctuation">[</span><span class="token operator">=</span> <span class="token operator">*</span> <span class="token number">3491</span> <span class="token number">945</span> <span class="token operator">*</span> <span class="token operator">=</span><span class="token punctuation">]</span><span class="token punctuation">)</span> then <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+       <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>bgp_path ~ <span class="token punctuation">[</span><span class="token operator">=</span> <span class="token operator">*</span> <span class="token number">6461</span> <span class="token number">945</span> <span class="token operator">*</span> <span class="token operator">=</span><span class="token punctuation">]</span><span class="token punctuation">)</span> then <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+       <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>bgp_path ~ <span class="token punctuation">[</span><span class="token operator">=</span> <span class="token operator">*</span> <span class="token number">6939</span> <span class="token number">945</span> <span class="token operator">*</span> <span class="token operator">=</span><span class="token punctuation">]</span><span class="token punctuation">)</span> then <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+       <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>bgp_path ~ <span class="token punctuation">[</span><span class="token operator">=</span> <span class="token operator">*</span> <span class="token number">7018</span> <span class="token number">945</span> <span class="token operator">*</span> <span class="token operator">=</span><span class="token punctuation">]</span><span class="token punctuation">)</span> then <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+       <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>bgp_path ~ <span class="token punctuation">[</span><span class="token operator">=</span> <span class="token operator">*</span> <span class="token number">7922</span> <span class="token number">945</span> <span class="token operator">*</span> <span class="token operator">=</span><span class="token punctuation">]</span><span class="token punctuation">)</span> then <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+       <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>bgp_path ~ <span class="token punctuation">[</span><span class="token operator">=</span> <span class="token operator">*</span> <span class="token number">9002</span> <span class="token number">945</span> <span class="token operator">*</span> <span class="token operator">=</span><span class="token punctuation">]</span><span class="token punctuation">)</span> then <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+       <span class="token keyword keyword-if">if</span> <span class="token punctuation">(</span>bgp_path ~ <span class="token punctuation">[</span><span class="token operator">=</span> <span class="token operator">*</span> <span class="token number">32097</span> <span class="token number">945</span> <span class="token operator">*</span> <span class="token operator">=</span><span class="token punctuation">]</span><span class="token punctuation">)</span> then <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+
+       <span class="token keyword keyword-return">return</span> <span class="token boolean">false</span><span class="token punctuation">;</span>
+   <span class="token punctuation">}</span>
+   <span class="token punctuation">...</span>
+
+   # to avoid breaking stuff<span class="token punctuation">,</span> assume the path is valid <span class="token keyword keyword-if">if</span> no <span class="token constant">ASA</span> exists<span class="token punctuation">.</span>
+   <span class="token keyword keyword-return">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span>
+<span class="token punctuation">}</span>
+</code></pre><div class="toolbar"><div class="toolbar-item"><button class="copy-to-clipboard-button" type="button" data-copy-state="copy"><span>Copy</span></button></div></div></div></div><p>With that, using the generated function is as easy as shoving it in a <code>/etc/bird/functions/aspa.conf</code> file, including it in <code>bird.conf</code> and using it for filtering!</p>
+<p>Using the function should look a little like this:</p>
+<div class="highlight"><div class="code-toolbar"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;" class=" language-conf"><code class=" language-conf" data-lang="conf">if (!is_aspa_valid()) then reject "aspa: not ok";
+</code></pre><div class="toolbar"><div class="toolbar-item"><button class="copy-to-clipboard-button" type="button" data-copy-state="copy"><span>Copy</span></button></div></div></div></div><p>Typing <code>birdc c</code> to reconfigure BIRD is a little underwhelming, though. Barely anyone publishes ASAs currently and the few that are won’t be likely to push out ASPA invalid routes any time soon. Once in a while we might find a route leak prevented by this system but it won’t be much for a <em>while</em>.</p>
+<p>However, to have some fun, we can just poke at the ASPA function and comment out a few key lines. For example: during testing I removed the line permitting Hurricane Electric, AS6939, to carry AS945’s routes. The result was successful in that it removed any routes from AS945 with AS6939 in the AS path from BIRDs version of the “RIB”.</p>
+<h1 id="closing">Closing<a href="https://as51019.com/posts/aspa-bird2/#closing" class="hanchor" arialabel="Anchor">⌗</a> </h1>
+<p>I think this was a fun evening project. It didn’t take too long and was pretty satisfying. It also taught me a bit about ASPA that I didn’t know before.</p>
+<p>If you’d like to do this for yourself I’d like to reiterate that ASPA is an incredibly new and unapproved standard that will undoubtedly change. I wouldn’t do this in production quite yet. Regardless I <a href="https://github.com/kjartanhr/routinator-aspa-json-to-bird2">published my program on GitHub</a> and I encourage you, if you have any improvements, to make a pull request <img src="./ASPA path validation in BIRD2 with Routinator and TypeScript __ AS51019_files/owiehappy.png" alt=":owiehappy:" height="24" style="display:inline-block;margin-bottom:-8px;margin-left:-3px;"></p>
+<h1 id="some-references">Some references<a href="https://as51019.com/posts/aspa-bird2/#some-references" class="hanchor" arialabel="Anchor">⌗</a> </h1>
+<ul>
+<li><a href="https://console.rpki-client.org/">rpki-client console</a></li>
+<li><a href="https://routinator.docs.nlnetlabs.nl/en/stable/">Routinator</a></li>
+</ul>
+<h1 id="questionscomments">Questions/comments<a href="https://as51019.com/posts/aspa-bird2/#questionscomments" class="hanchor" arialabel="Anchor">⌗</a> </h1>
+<p>If you’d like to ask me something or have a comment I’d be happy chat via <a href="mailto:kjartann@kjartann.is">kjartann@kjartann.is</a>.</p>
+<img src="./ASPA path validation in BIRD2 with Routinator and TypeScript __ AS51019_files/owiehappy.gif" alt=":owiehappy: emoji" width="48">
+
+      </div></div>
+
+  
+    
+<div class="pagination">
+    <div class="pagination__title">
+        <span class="pagination__title-h">Read other posts</span>
+        <hr>
+    </div>
+    <div class="pagination__buttons">
+        
+        
+        <span class="button next">
+            <a href="https://as51019.com/posts/intro-internet/">
+                <span class="button__text">Quick intro to how the internet really works</span>
+                <span class="button__icon">→</span>
+            </a>
+        </span>
+        
+    </div>
+</div>
+
+  
+
+  
+    
+
+  
+</article>
+
+  </div>
+
+  
+    <footer class="footer">
+  <div class="footer__inner">
+    
+      <div class="copyright">
+        <span>© 2024 Octan Ltd. :: <a href="https://as51019.com/credits">Credits</a></span>
+    
+      <span>:: <a href="https://as51019.com/imprint">Imprint</a></span>
+      </div>
+  </div>
+</footer>
+
+
+
+
+
+
+<script type="text/javascript" src="./ASPA path validation in BIRD2 with Routinator and TypeScript __ AS51019_files/bundle.min.js"></script>
+
+
+
+
+
+  
+</div>
+
+
+<script data-collect-dnt="true" defer="" src="./ASPA path validation in BIRD2 with Routinator and TypeScript __ AS51019_files/latest.js"></script>
+<noscript><img src="./ASPA path validation in BIRD2 with Routinator and TypeScript __ AS51019_files/noscript.gif" alt="" referrerpolicy="no-referrer-when-downgrade"></noscript>
+
+
+</body></html>

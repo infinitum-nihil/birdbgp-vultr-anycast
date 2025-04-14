@@ -1,0 +1,27 @@
+# Environment variables
+.env
+
+# Deployment-generated files
+*_id.txt
+*_ipv4.txt
+*_ipv6.txt
+floating_*.txt
+vultr_ssh_key_id.txt
+birdbgp-losangeles_old_id.txt
+
+# Logs
+*.log
+deploy.log
+
+# BIRD configuration files
+*_bird.conf
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*~

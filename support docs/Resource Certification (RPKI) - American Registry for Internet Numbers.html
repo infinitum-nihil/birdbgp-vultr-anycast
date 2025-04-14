@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<!-- saved from url=(0043)https://www.arin.net/resources/manage/rpki/ -->
+<html lang="en-us" data-google-analytics-opt-out=""><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Resource Certification (RPKI) - American Registry for Internet Numbers</title>
+    
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width,minimum-scale=1">
+    <meta name="description" content="Resource Public Key Infrastructure (RPKI) is an opt-in service that provides security for Internet routing. You can use ARIN’s RPKI system in two ways: Using … ">
+    <meta name="keywords" content="">
+    <meta name="revised" content="1731434808">
+    <meta name="priority" content="1">
+    
+
+    <meta property="og:url" content="https://www.arin.net/resources/manage/rpki/">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Resource Certification (RPKI)">
+    <meta property="og:description" content="Resource Public Key Infrastructure (RPKI) is an opt-in service that provides security for Internet routing. You can use ARIN’s RPKI system in two ways: Using … ">
+    <meta property="og:image" content="https://www.arin.net//img/logo-social.png">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:site" content="@teamarin">
+
+    <link rel="canonical" href="https://www.arin.net/resources/manage/rpki/">
+    <link rel="shortcut icon" href="https://www.arin.net/img/favicon.ico">
+    <link rel="alternate" type="application/rss+xml" href="https://www.arin.net/resources/manage/rpki/rss.xml" title="American Registry for Internet Numbers">
+    <link href="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/styles.min.8c6d38bf9925492b35f741f72bce4d9eac18840bfe76c53a85c1e1f1b11c633d.css" rel="stylesheet" type="text/css">
+    <link href="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/font-awesome.min.css" rel="stylesheet" type="text/css">
+    <script type="text/javascript" async="" src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/sj.js"></script><script async="" src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/gtm.js"></script><script src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/head-scripts.min.js"></script>
+    
+    <script src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/externals.js"></script>
+
+       
+</head>
+
+<body class="d-flex flex-column">
+  
+  <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-5VJ67SD"
+    height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+  
+  <div class="flex-shrink-0">
+  <header>
+
+  <div class="container-fluid" id="top-bar">
+  <a href="https://www.arin.net/resources/manage/rpki/#main-con" class="skip-link visually-hidden-focusable">Skip to main content</a>
+
+    <div class="header-con">
+      <div class="row">
+       <div id="top-bar-logo"><a href="https://www.arin.net/"><img src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/logo-inverse-nowords.svg" alt="The ARIN logo"></a></div>
+        <div id="display-ip">
+          <p>
+          <a id="scroll-icon-link" href="https://www.arin.net/" aria-label="Home"><img id="scroll-icon" src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/icon-inverse-color.svg" alt="The ARIN logo"></a>
+            Your IP<span id="ip-type">v4</span> address is <strong id="ip-address"><a href="https://search.arin.net/rdap?query=207.231.1.46&amp;searchFilter=ipaddr">207.231.1.46</a></strong>
+          </p>
+
+        </div>
+        <div id="login-links"><a id="login-link-outage" href="https://www.arin.net//notices" data-bs-toggle="tooltip" data-bs-placement="left" data-bs-container="#top-bar" title="" style="display:none" data-bs-original-title="Services currently unavailable">
+              <i class="fa fa-ban fa-fw" aria-hidden="true"></i>
+              <span>Log in</span>
+            </a>
+
+            <span id="notification-link-container"></span>
+
+            <a id="login-link" href="https://account.arin.net/public/login" style="display: inline-block;">
+              <i class="fa fa-user fa-fw" aria-hidden="true"></i>
+              <span>Log in</span>
+            </a>
+
+            <a id="account-link-container" aria-expanded="false" href="javascript:void(0)" style="display: none;">
+              <i class="fa fa-user fa-fw" aria-hidden="true"></i>
+              <span id="account-link">User</span>
+              <i class="fa fa-caret-down fa-fw" aria-hidden="true"></i>
+            </a>
+          <p></p>
+
+          <div id="account-link-dropdown">
+            <ul id="account-link-dropdown-list">
+              <li id="account-dashboard-item">
+                <a id="account-dashboard-link" class="account-link-action" href="https://account.arin.net/public/secure/dashboard">
+                  <i class="fa fa-fw fa-dashboard"></i> Dashboard
+                </a>
+              </li>
+              <li id="account-settings-item">
+                <a id="account-settings-link" class="account-link-action" href="https://account.arin.net/public/secure/profile">
+                  Settings
+                  <small>Profile and security information</small>
+                </a>
+              </li>
+              <li>
+                <a id="account-logout-link" href="https://account.arin.net/public/logout">
+                  Log Out
+                </a>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div> 
+
+  <div class="container-fluid" id="logo-bar">
+    <div class="header-con">
+      <div class="row" id="universal-links">
+        <div id="logo-con">
+          <a href="https://www.arin.net/" aria-label="Home">
+            <img src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/logo-stnd.svg" alt="The ARIN logo">
+          </a>
+        </div>
+        <div id="search-con">
+          <div class="input-group" role="search" aria-label="Universal Search">
+            <input type="text" name="q" id="input-box" class="form-control" placeholder="Search Site or Whois" aria-label="Search Site or Whois" onkeyup="InputChanged(event, document.getElementById(&#39;input-box&#39;).value)">
+            <button class="btn btn-navbar" type="button" onclick="Search(document.getElementById(&#39;input-box&#39;).value)">Search</button>
+          </div>
+        </div>
+        <span class="search-tou">all requests subject to <a href="https://www.arin.net/resources/registry/whois/tou/">terms of use</a>&nbsp;&nbsp;</span>
+      </div>
+    </div>
+  </div> 
+</header>
+
+    <div class="container-fluid" id="nav-wrapper" data-sj-ignore=""> 
+    <div class="container"> 
+
+      <nav class="navbar navbar-expand-lg bg-light navbar-light yamm" aria-label="main navigation">
+        <a class="navbar-brand" href="https://www.arin.net/" aria-label="Home"><i class="fa fa-home fa-fw"></i></a>
+
+
+          <button class="btn btn-navbar" id="navbar-search-btn" type="button" href="javascript:void(0)" onclick="Search()">
+            <span class="visually-hidden">Search</span>
+            <i class="fa fa-lg fa-search"></i>
+          </button>
+
+          
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#js-navbar-collapse" aria-controls="js-navbar-collapse" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+          </button>
+
+
+        
+        <div id="js-navbar-collapse" class="collapse navbar-collapse js-navbar-collapse">
+          <ul class="navbar-nav">
+
+              
+              
+
+<li class="nav-item drophover yamm-fw wayfinder">
+  <a href="https://www.arin.net/resources/" class="nav-link drophover-toggle">IP Addresses &amp; ASNs</a><ul class="drophover-menu" style="visibility: hidden;">
+    <li>
+      <div class="yamm-content">
+        <div class="row">
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/resources/guide/">Get Started</a>
+            </li>
+            <li><a href="https://www.arin.net/resources/guide/account/">ARIN Account Management</a></li>
+            <li><a href="https://www.arin.net/resources/guide/request/">Requesting IP Addresses or ASNs</a></li>
+            <li><a href="https://www.arin.net/resources/guide/ipv6/">IPv6 Information</a></li>
+            <li><a href="https://www.arin.net/resources/guide/ipv4/">IPv4 Addressing Options</a></li>
+            <li><a href="https://www.arin.net/resources/guide/asn/">Autonomous System Numbers</a></li>
+            <li><a href="https://www.arin.net/resources/guide/legacy/">Legacy Resources at ARIN</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/resources/fees/">Fee &amp; Billing Information</a>
+            </li>
+            <li><a href="https://www.arin.net/resources/fees/fee_schedule/">Fee Schedule</a></li>
+            <li><a href="https://www.arin.net/resources/fees/psp/">Premier Support Plan (PSP)</a></li>
+            <li><a href="https://www.arin.net/resources/fees/payment/">Make a Payment</a></li>
+            <li><a href="https://www.arin.net/resources/fees/contact/">How Billing Works</a></li>
+            <li><a href="https://www.arin.net/resources/fees/returns/">Resource Revocation, Returns, and Reinstatement</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/resources/registry/">IP &amp; ASN Registry Services</a>
+            </li>
+            <li><a href="https://www.arin.net/resources/registry/manage/">Managing Resource Records</a></li>
+            <li><a href="https://www.arin.net/resources/registry/transfers/">Transferring IP Addresses &amp; ASNs</a></li>
+            <li><a href="https://www.arin.net/resources/registry/reassignments/">Reporting Reassignments</a></li>
+            <li><a href="https://www.arin.net/resources/registry/originas/">Autonomous System Originations (Origin AS)</a></li>
+            <li><a href="https://www.arin.net/resources/registry/whois/">Using Whois</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/resources/manage/">Resource Management Services</a>
+            </li>
+            <li><a href="https://www.arin.net/resources/manage/regrws/">Automating Record Management with Reg-RWS</a></li>
+            <li><a href="https://www.arin.net/resources/manage/dnssec/">Securing DNS (DNSSEC)</a></li>
+            <li><a href="https://www.arin.net/resources/manage/routingsecurity/">Routing Security Eligibility FAQs</a></li>
+            <li><a href="https://www.arin.net/resources/manage/rpki/">Resource Certification (RPKI)</a></li>
+            <li><a href="https://www.arin.net/resources/manage/irr/">Internet Routing Registry (IRR)</a></li>
+            <li><a href="https://www.arin.net/resources/manage/reverse/">Reverse DNS</a></li>
+            </ul>
+          </div>
+      </div>
+    </li>
+  </ul></li>
+
+<li class="nav-item drophover yamm-fw">
+  <a href="https://www.arin.net/participate/" class="nav-link drophover-toggle">Policy &amp; Participation</a><ul class="drophover-menu" style="visibility: hidden;">
+    <li>
+      <div class="yamm-content">
+        <div class="row">
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/participate/policy/">Policy</a>
+            </li>
+            <li><a href="https://www.arin.net/participate/policy/nrpm/">Number Resource Policy Manual</a></li>
+            <li><a href="https://www.arin.net/participate/policy/pdp/">Policy Development Process (PDP)</a></li>
+            <li><a href="https://www.arin.net/participate/policy/drafts/">Draft and Recommended Draft Policies</a></li>
+            <li><a href="https://www.arin.net/participate/policy/proposals/">Policy Proposals</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/participate/meetings/">Meetings &amp; Events</a>
+            </li>
+            <li><a href="https://www.arin.net/participate/meetings/upcoming/">Public Policy and Members Meetings</a></li>
+            <li><a href="https://www.arin.net/participate/meetings/outreach/">Outreach Events</a></li>
+            <li><a href="https://www.arin.net/participate/meetings/fellowships/">ARIN Fellowship Program</a></li>
+            <li><a href="https://www.arin.net/participate/meetings/sponsors/">Sponsorship</a></li>
+            <li><a href="https://www.arin.net/participate/meetings/past/">Past Meetings</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/participate/oversight/">Membership &amp; Elections</a>
+            </li>
+            <li><a href="https://www.arin.net/participate/oversight/membership/">Membership</a></li>
+            <li><a href="https://www.arin.net/participate/oversight/elections/">Elections</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/participate/community/">Community Interaction</a>
+            </li>
+            <li><a href="https://www.arin.net/participate/community/community_surveys/">ARIN Community Satisfaction Surveys</a></li>
+            <li><a href="https://www.arin.net/participate/community/mailing_lists/">Mailing Lists</a></li>
+            <li><a href="https://www.arin.net/participate/community/acsp/">Consultations &amp; Suggestions</a></li>
+            </ul>
+          </div>
+      </div>
+    </li>
+  </ul></li>
+
+<li class="nav-item drophover yamm-fw">
+  <a href="https://www.arin.net/reference/" class="nav-link drophover-toggle">Reference &amp; Tools</a><ul class="drophover-menu" style="visibility: hidden;">
+    <li>
+      <div class="yamm-content">
+        <div class="row">
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/reference/tools/">Tools</a>
+            </li>
+            <li><a href="https://www.arin.net/reference/tools/testing/">Operational Test and Evaluation (OT&amp;E) Environment</a></li>
+            <li><a href="https://www.arin.net/reference/tools/cidr/">CIDR Calculator</a></li>
+            <li><a href="https://www.arin.net/reference/tools/software/">Community Software Repository</a></li>
+            <li><a href="https://www.arin.net/reference/tools/fraud_report/">Internet Number Resource Fraud Reporting</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/reference/materials/">Reference</a>
+            </li>
+            <li><a href="https://www.arin.net/reference/materials/abuse/">Spam &amp; Network Abuse Reporting</a></li>
+            <li><a href="https://www.arin.net/reference/materials/data/">Registry Data Description</a></li>
+            <li><a href="https://www.arin.net/reference/materials/accuracy/">Data Accuracy</a></li>
+            <li><a href="https://www.arin.net/reference/materials/security/">Information Security at ARIN</a></li>
+            <li><a href="https://www.arin.net/reference/materials/software/">ARIN Software Releases</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/reference/research/">Research</a>
+            </li>
+            <li><a href="https://www.arin.net/reference/research/statistics/">Statistics &amp; Reporting</a></li>
+            <li><a href="https://www.arin.net/reference/research/whowas/">Historical Whois Data (WhoWas)</a></li>
+            <li><a href="https://www.arin.net/reference/research/bulkwhois/">Bulk Whois Data</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/reference/training/">Training &amp; Education</a>
+            </li>
+            <li><a href="https://www.arin.net/reference/training/leadership/">ARIN Leadership Development Program</a></li>
+            <li><a href="https://www.arin.net/reference/training/webinars/">Instructional Webinars</a></li>
+            <li><a href="https://www.arin.net/reference/training/resources/">Resource Materials</a></li>
+            <li><a href="https://www.arin.net/reference/training/help_videos/">ARIN Online Help Videos</a></li>
+            </ul>
+          </div>
+      </div>
+    </li>
+  </ul></li>
+
+<li class="nav-item drophover yamm-fw">
+  <a href="https://www.arin.net/about/" class="nav-link drophover-toggle">About</a><ul class="drophover-menu" style="visibility: hidden;">
+    <li>
+      <div class="yamm-content">
+        <div class="row">
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/about/welcome/">Welcome to ARIN</a>
+            </li>
+            <li><a href="https://www.arin.net/about/welcome/staff/">Organization Structure &amp; Staff</a></li>
+            <li><a href="https://www.arin.net/about/welcome/region/">Our Region</a></li>
+            <li><a href="https://www.arin.net/about/welcome/board/">ARIN Board of Trustees</a></li>
+            <li><a href="https://www.arin.net/about/welcome/ac/">Advisory Council</a></li>
+            <li><a href="https://www.arin.net/about/welcome/nronc/">NRO Number Council</a></li>
+            <li><a href="https://www.arin.net/about/welcome/careers/">Careers</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/about/corporate/">Corporate Documentation</a>
+            </li>
+            <li><a href="https://www.arin.net/about/corporate/documents/">Corporate Documents</a></li>
+            <li><a href="https://www.arin.net/about/corporate/annual/">Annual Reports</a></li>
+            <li><a href="https://www.arin.net/about/corporate/planning/">Strategic Planning &amp; Budgeting</a></li>
+            <li><a href="https://www.arin.net/about/corporate/agreements/">Agreements</a></li>
+            <li><a href="https://www.arin.net/about/corporate/history/">History of ARIN</a></li>
+            <li><a href="https://www.arin.net/about/corporate/vendors/">Third-Party Vendors and IPv6</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/about/community_grants/">Community Grants</a>
+            </li>
+            <li><a href="https://www.arin.net/about/community_grants/program/">ARIN Community Grant Program</a></li>
+            <li><a href="https://www.arin.net/about/community_grants/recipients/">Community Grant Program Recipients</a></li>
+            </ul>
+          <ul>
+            <li class="mega-header">
+              <a href="https://www.arin.net/about/relations/">External Relations</a>
+            </li>
+            <li><a href="https://www.arin.net/about/relations/governance/">Internet Governance</a></li>
+            <li><a href="https://www.arin.net/about/relations/membership/">Memberships, Sponsorships, and MOUs</a></li>
+            <li><a href="https://www.arin.net/about/relations/law_enforcement/">Law Enforcement &amp; Public Safety</a></li>
+            <li><a href="https://www.arin.net/about/relations/community/">Technical Community</a></li>
+            </ul>
+          </div>
+      </div>
+    </li>
+  </ul></li>
+
+<li class="nav-item drophover yamm-fw">
+  <a href="https://www.arin.net/blog/" class="nav-link drophover-toggle no-caret">Blog</a></li>
+
+</ul>
+
+          <a id="payment-btn" class="btn navbar-btn ms-auto" href="https://www.arin.net/resources/fees/payment" role="button">Pay Now</a>
+          <a id="feedback-btn" class="btn navbar-btn outage-guard" href="javascript:void(0)" role="button">Feedback</a>
+
+        </div> 
+      </nav>
+    </div> 
+  </div> 
+
+
+  
+
+<nav class="container" id="bread-con" aria-label="Breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="https://www.arin.net/" aria-label="Home">Home</a></li>
+      <li class="breadcrumb-item"><a href="https://www.arin.net/resources/">IP Addresses &amp; ASNs</a></li>
+      <li class="breadcrumb-item"><a href="https://www.arin.net/resources/manage/">Resource Management Services</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Resource Certification (RPKI)</li>
+  </ol>
+  <ol class="breadcrumb breadcrumb-mobile">
+    <li class="breadcrumb-item"><a href="https://www.arin.net/resources/manage/">Resource Management Services</a></li>
+  </ol>
+</nav>
+<div class="container" id="main-con" role="main">
+  <h1>Resource Certification (RPKI)</h1>
+  
+
+  <div class="row">
+    <div class="toc-con toc-sticky">
+      <a data-bs-toggle="collapse" class="has-toggle mobile-toggle" role="button" href="https://www.arin.net/resources/manage/rpki/#toc-collapse" aria-expanded="true" aria-controls="toc-collapse">
+        <h2 id="toc-header" class="sidebar">On this page</h2>
+      </a>
+      <a href="https://www.arin.net/resources/manage/rpki/#main-text" class="btn btn-light toc-skip visually-hidden-focusable">Skip to main text</a>
+      <p id="toc-scroll-tip" aria-hidden="true">
+          <i class="fa fa-fw fa-arrow-down"></i>
+          Scroll for more
+          <i class="fa fa-fw fa-arrow-down"></i>
+      </p>
+      <div class="collapse show" id="toc-collapse">
+        <nav id="TableOfContents">
+  <ul>
+    <li><a href="https://www.arin.net/resources/manage/rpki/#why-use-rpki">Why Use RPKI?</a></li>
+    <li><a href="https://www.arin.net/resources/manage/rpki/#rpki-routing">Using ARIN’s RPKI Repository to Perform Route Origin Validation</a>
+      <ul>
+        <li><a href="https://www.arin.net/resources/manage/rpki/#validators">Obtain an RPKI Validator and Install It</a></li>
+        <li><a href="https://www.arin.net/resources/manage/rpki/#obtain-arin-s-routing-information-via-its-trust-anchor-locator">Obtain ARIN’s Routing Information via its Trust Anchor Locator</a></li>
+      </ul>
+    </li>
+    <li><a href="https://www.arin.net/resources/manage/rpki/#rpki-certifying">Certifying Your Resources in ARIN’s RPKI</a></li>
+    <li><a href="https://www.arin.net/resources/manage/rpki/#additional-rpki-information">Additional RPKI Information</a></li>
+  </ul>
+</nav></div>
+      <a id="related-jump-link" href="https://www.arin.net/resources/manage/rpki/#related-jump">Jump to related content</a>
+    </div>
+
+<div id="main-text" class="three-col-text">
+      <p>Resource Public Key Infrastructure (RPKI) is an opt-in service that provides security for Internet routing. You can use ARIN’s RPKI system in two ways:</p>
+<ul>
+<li>
+<p><strong>Using ARIN’s RPKI Repository to Perform Route Origin Validation</strong>: You can obtain information about routes from ARIN’s RPKI repository to make routing decisions for your network. This is also known as being a Relying Party. You will need to download the <a href="https://www.arin.net/resources/manage/rpki/tal/#arin-tal">ARIN Trust Anchor Locator (TAL)</a> and use it with an RPKI validator. More information is provided in <a href="https://www.arin.net/resources/manage/rpki/#rpki-routing">Using ARIN’s RPKI Repository to Perform Route Origin Validation</a>.</p>
+</li>
+<li>
+<p><strong>Providing certification for Your ARIN resources</strong>: If you have Internet number resources that are covered by an ARIN <a href="https://www.arin.net/about/corporate/agreements/rsa_faq/">Registration Services Agreement (RSA)</a> or <a href="https://www.arin.net/resources/guide/legacy/">Legacy Registration Services Agreement (LRSA)</a>, you can certify that you have authority over routes that originate from your IP addresses. You do this by requesting certificates and creating Route Origin Authorizations (ROAs). The ROAs are then made available to RPKI validators. More information is provided below in <a href="https://www.arin.net/resources/manage/rpki/#rpki-certifying">Certifying Your Resources in ARIN’s RPKI</a>.</p>
+</li>
+</ul>
+<h2 id="why-use-rpki">Why Use RPKI?</h2>
+<p>In the early Internet, routing was dependent on network relationships based on mutual trust. This model proved sufficient when each party expected that transmitted information was safe, accurate, and not affected by accidental or malicious activity. As the Internet grew from a simple platform for sharing information to a commercial platform, it has become increasingly vulnerable to abuse and attack.</p>
+<p>RPKI uses cryptographically verifiable statements to ensure that Internet number resources are certifiably linked to the stated holders of those resources. This enables resource holders to attest which Autonomous System Numbers (ASNs) should originate their prefixes (i.e. blocks of IP addresses). Network operators can compare Border Gateway Protocol (BGP) announcements from the global Internet routing table with RPKI validity data to make informed decisions to enhance their routing security.</p>
+<p>To authorize an Autonomous System Number (ASN) to route a set of prefixes, the resource holder must first obtain a resource certificate from their issuing Regional Internet Registry (RIR) that verifies the IP addresses allocated to them. After receiving a resource certificate, the resource holder creates signed Route Origin Authorizations (ROAs) that specify the ASN authorized to originate their IP addresses. Typically network operators for the resource holder create the ROAs, which are then used by other network operators to make decisions on routing. The ROAs provide verification that the routes being advertised are valid and can be used safely in routing tables.</p>
+<h2 id="rpki-routing">Using ARIN’s RPKI Repository to Perform Route Origin Validation</h2>
+<p>In order to collect information from ARIN’s RPKI repository you’ll need to do the following:</p>
+<h3 id="validators">Obtain an RPKI Validator and Install It</h3>
+<p>Download an RPKI validator (Relying Party software) by selecting one or more of the packages below and install it in your network. Consult the validator’s software documentation for system requirements and installation instructions.</p>
+<ul>
+<li><a href="https://github.com/NICMx/FORT-validator">Fort Validator</a> - tested as part of each ARIN Online release</li>
+<li><a href="https://www.nlnetlabs.nl/projects/rpki/routinator/">NLnet Labs (Routinator)</a> - tested as part of each ARIN Online release</li>
+<li><a href="https://rpki-client.org/">rpki-client</a> - tested as part of each ARIN Online release</li>
+<li><a href="https://github.com/bgpsecurity/rpstir2/">RPSTIR2</a></li>
+<li><a href="https://github.com/lolepezy/rpki-prover">rpki-prover</a></li>
+<li><a href="https://github.com/cloudflare/cfrpki#octorpki">OctoRPKI</a> - deprecated by the developer and no longer supported</li>
+</ul>
+<h3 id="obtain-arin-s-routing-information-via-its-trust-anchor-locator">Obtain ARIN’s Routing Information via its Trust Anchor Locator</h3>
+<p>A Trust Anchor Locator (TAL) is a file used to allow Relying Parties to retrieve RPKI data from a repository. Each Regional Internet Registry (RIR) has a TAL needed to access its RPKI repository.</p>
+<p>ARIN’s TAL contains the URL of ARIN’s published RPKI repository and ARIN’s encrypted public key. The public key is used to cryptographically verify that ARIN has signed the artifacts within the repository.</p>
+<p>If ARIN’s TAL has not been provided in the validator software, you will need to <a href="https://www.arin.net/resources/manage/rpki/tal/">download it from the ARIN website</a> and transfer it to the server where you installed the RPKI validator.</p>
+<p>Your validator will connect to ARIN’s RPKI repository via RPKI Repository Delta Protocol (RRDP) or rsync and download the validated RPKI certificates and ROAs from which you can make routing decisions based on RPKI validity data. Validators periodically fetch data from ARIN’s repository every few minutes.</p>
+<h2 id="rpki-certifying">Certifying Your Resources in ARIN’s RPKI</h2>
+<p>To certify your resources, you need:</p>
+<ul>
+<li>IPv4 or IPv6 resources issued to you directly from ARIN</li>
+<li>A signed <a href="https://www.arin.net/about/corporate/agreements/rsa_faq/">RSA/LRSA</a> covering the resources you wish to certify</li>
+<li>An <a href="https://www.arin.net/resources/guide/account/">ARIN Online account</a> linked to an Admin, Tech, or Routing <a href="https://www.arin.net/resources/guide/account/records/poc/">Point of Contact (POC)</a> with authority to manage those resources</li>
+</ul>
+<p>ARIN offers two models of RPKI: Hosted and Delegated. Decide whether you are using the Hosted or Delegated model of RPKI, and follow the instructions provided on the pertinent page to create the necessary files and configure RPKI in ARIN Online.</p>
+<ul>
+<li><a href="https://www.arin.net/resources/manage/rpki/hosted">Hosted RPKI</a>: With Hosted RPKI, ARIN hosts a Certificate Authority (CA) and signs all Route Origin Authorizations (ROAs) for resources within the ARIN region, and maintains the repository and publishes your resource certificates and ROAs to make them available to other entities. Visit <a href="https://www.arin.net/resources/manage/rpki/hosted">Hosted RPKI</a> for more information.</li>
+<li><a href="https://www.arin.net/resources/manage/rpki/delegated/">Delegated RPKI</a>: With Delegated RPKI, you request your own delegated resource certificates and host your own Certificate Authority (CA) to sign ROAs. You can maintain your own repository and publish your resource certificate and ROAs, or you can use ARIN’s Repository Publication Service. Visit <a href="https://www.arin.net/resources/manage/rpki/delegated/">Delegated RPKI</a> for more information.</li>
+</ul>
+<div class="infobox">
+  <p>If you want to change between the Delegated and Hosted models, you must log in to ARIN Online and submit an Ask ARIN ticket by choosing Ask ARIN from the navigation menu, or contact the Registration Services Help Desk by phone Monday through Friday, 7:00 AM to 7:00 PM ET at +1.703.227.0660.</p>
+</div>
+
+<h2 id="additional-rpki-information">Additional RPKI Information</h2>
+<p>More information about RPKI is available at the following external sites:</p>
+<ul>
+<li><a href="https://rpki.readthedocs.io/en/latest/index.html">RPKI Documentation</a> at readthedocs.io</li>
+<li><a href="https://datatracker.ietf.org/doc/rfc6810">RFC 6810: The Resource Public Key Infrastructure (RPKI) to Router Protocol</a></li>
+<li><a href="https://www.youtube.com/watch?v=rH3CPosGNjY">Resource Certification Explained</a> video from the Number Resource Organization (NRO)</li>
+<li><a href="https://datatracker.ietf.org/wg/sidrops/documents/">SIDR Working Group Documents</a></li>
+<li><a href="https://afrinic.net/resource-certification">RPKI at AFRINIC</a></li>
+<li><a href="https://www.apnic.net/community/security/resource-certification/">Resource Certification at APNIC</a></li>
+<li><a href="https://www.lacnic.net/640/2/lacnic/resource-certification-system-rpki">Certification of Resources at LACNIC</a></li>
+<li><a href="https://www.ripe.net/manage-ips-and-asns/resource-management/certification">Resource Certification (RPKI) at RIPE NCC</a></li>
+</ul>
+
+</div>
+    <div class="right-rail">
+      <div class="rr-content">
+        <a name="related-jump"></a>
+
+
+
+
+<h2 class="sidebar">Resource Certification (RPKI)</h2>
+<ul><li><a href="https://www.arin.net/resources/manage/rpki/tal/">ARIN's Trust Anchor Locator (TAL)</a></li>
+  <li><a href="https://www.arin.net/resources/manage/rpki/hosted/">Hosted RPKI</a></li>
+  <li><a href="https://www.arin.net/resources/manage/rpki/byoip/">Using ARIN’s RPKI with Bring Your Own IP Services</a></li>
+  <li><a href="https://www.arin.net/resources/manage/rpki/hybrid/">ARIN Repository Publication Service (RPS) - 'Hybrid RPKI'</a></li>
+  <li><a href="https://www.arin.net/resources/manage/rpki/delegated/">Delegated RPKI</a></li>
+  <li><a href="https://www.arin.net/resources/manage/rpki/irrautomanager/">ARIN's IRR Auto-Manager</a></li>
+  <li><a href="https://www.arin.net/resources/manage/rpki/faq/">Resource Public Key Infrastructure (RPKI) FAQs &amp; Best Practices</a></li>
+  <li><a href="https://www.arin.net/resources/manage/rpki/roa_request/">Route Origin Authorizations (ROAs)</a></li>
+  <li><a href="https://www.arin.net/resources/manage/rpki/troubleshooting/">RPKI Troubleshooting</a></li>
+  </ul>
+
+<h2 class="sidebar">Related</h2>
+    <ul>
+      
+        <li><a href="https://www.arin.net/resources/manage/rpki/cps.pdf">ARIN Certification Practice Statement for Resource Certification</a></li>
+      
+        <li><a href="https://www.arin.net/resources/manage/regrws/methods/#route-origin-authorizations-roas">RESTful Methods - Route Origin Authorizations (ROAs)</a></li>
+      
+        <li><a href="https://www.arin.net/reference/training/ARIN_whyrpki.pdf">Why RPKI?: Enhance the Security and Integrity of Your Network Infrastructure</a></li>
+    </ul>
+      <p data-sj-ignore="">
+        <strong>Registration Services Help Desk</strong><br>
+        7:00 AM to 7:00 PM ET<br>
+        Phone: +1.703.227.0660<br>
+        Fax: +1.703.997.8844<br>
+        
+      </p>
+      <p data-sj-ignore=""><a href="https://www.arin.net/resources/guide/helpdesk/">Tips for Calling the Help Desk</a></p>
+    </div>
+    </div>
+  </div>
+<div id="liveForScreenReaders" class="accessible-hide" aria-live="polite"></div></div>
+  </div>
+  <footer>
+  <nav id="foot-top" class="btt" aria-labelledby="foot-top-label"><span id="foot-top-label"><a href="javascript:void(0)">Back to top</a></span></nav>
+    <div id="scroll-btt" class="btt" aria-hidden="true"><i class="fa fa-lg fa-chevron-up"></i><p>Back<br>to top</p></div>
+    <div class="foot-content">
+      <div class="row">
+      <div class="foot-col">
+        <ul class="foot-links">
+          <li><a href="https://account.arin.net/public/terms-of-service">Terms of Service</a></li>
+          <li><a href="https://www.arin.net/sitemap/">Site Map</a></li>
+          <li><a href="https://www.arin.net/about/privacy/">Privacy Policy</a></li>
+          <li><a href="https://www.arin.net/reference/materials/abuse/">Network Abuse</a></li>
+          <li><a href="https://www.arin.net/reference/accessibility">Accessibility</a></li>
+          <li><a href="https://www.arin.net/about/corporate/standards/">Standards of Behavior</a></li>
+        </ul>
+      </div>
+      <div class="foot-col">
+        <p class="foot-copy">
+          <img src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/logo-reverse.svg" alt="The ARIN logo" style="max-width:300px">
+          © Copyright 1997<span id="copy-date"> – 2025</span>, American Registry for Internet Numbers, Ltd.
+        </p>
+        <p class="foot-copy">
+          <a href="http://www.nro.net/"><img src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/nro-logo2.png" alt="Visit the NRO website"></a>
+        </p>
+        <p class="foot-copy">
+          A member of the Number Resource Organization
+        </p>
+      </div>
+      <div class="foot-col">
+        <p class="foot-contact">
+          <a href="https://arin.statuspage.io/">Service Status</a>
+        </p>
+        <p class="foot-contact">
+          <a href="https://www.arin.net/contact/">Contact Us</a>
+        </p>
+        <p class="foot-contact">
+          Registration Services: <a href="tel:+1-703-227-0660">+1.703.227.0660</a><br>
+          Financial Services: <a href="tel:+1-703-227-9886">+1.703.227.9886</a><br>
+          Main: <a href="tel:+1-703-227-9840">+1.703.227.9840</a>
+        </p>
+        <p class="foot-contact">
+          </p><ul class="foot-social list-inline">
+            <li class="list-inline-item"><a href="https://www.facebook.com/TeamARIN"><i class="fa fa-facebook-official fa-fw" aria-hidden="true"></i><span>Visit ARIN on Facebook</span></a></li>
+            <li class="list-inline-item" id="x-logo"><a href="https://x.com/TeamARIN"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="m99.45,9.05c0-5.62-2.88-8.52-8.44-8.52-27.32-.02-54.65-.02-81.97,0C3.28.53.54,3.34.54,9.17c0,13.66,0,27.32,0,40.98,0,13.58,0,27.16,0,40.73,0,5.73,2.84,8.58,8.62,8.59,27.16.02,54.31.02,81.47,0,5.91,0,8.82-2.87,8.83-8.7.02-27.24.02-54.48,0-81.72Zm-32.66,83.26c-7.38-10.72-14.86-21.6-22.48-32.68-9.55,11.1-18.94,22.01-28.25,32.83h-7.29c10.94-12.72,21.58-25.09,32.3-37.56C30.37,39.31,19.7,23.77,8.81,7.92h24.64c6.96,10.12,14.07,20.45,21.34,31.01,9.06-10.53,17.95-20.86,26.79-31.12h7.28c-10.42,12.12-20.57,23.93-30.82,35.86,11.08,16.13,22.14,32.23,33.41,48.64h-24.65Z"></path><path d="m81.49,87.11h-11.23C53.25,62.79,36.14,38.32,18.81,13.52h11.23c16.94,24.23,34.05,48.7,51.45,73.59Z"></path></svg><span>Visit ARIN on X</span></a></li>
+            <li class="list-inline-item"><a href="https://www.linkedin.com/company/arin"><i class="fa fa-linkedin-square fa-fw" aria-hidden="true"></i><span>Visit ARIN on LinkedIn</span></a></li>
+            <li class="list-inline-item"><a href="https://www.youtube.com/c/teamarin/"><i class="fa fa-youtube-square fa-fw" aria-hidden="true"></i><span>Visit ARIN on YouTube</span></a></li>
+          </ul>
+        <p></p>
+        <p class="foot-contact">
+          <a href="https://www.arin.net/about/media/">Media</a>
+        </p>
+
+      </div>
+      </div>
+    </div>
+  </footer>
+  <div id="preload" aria-hidden="true"></div>
+
+
+<script src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/bootstrap.bundle.min.js"></script>
+<script src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/static-utils.js"></script>
+
+
+<script src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/global.min.9532802f01c6850ec41ca776339338b7ae7269df2da09d0ed576ab2d69d8fb06.js"></script>
+
+<script src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/script.js"></script><iframe src="./Resource Certification (RPKI) - American Registry for Internet Numbers_files/frame.html" title="American Registry for Internet Numbers Status" aria-hidden="true" style="position: fixed; border: none; box-shadow: rgba(9, 20, 66, 0.25) 0px 20px 32px -8px; z-index: 9999; transition: left 1s, bottom 1s, right 1s; height: 115px; width: 320px; left: -9999px; right: auto; bottom: 60px;" tabindex="-1"></iframe>
+
+
+
+<span id="okta-plugin-message-channel-available" style="display: none;"></span></body></html>
