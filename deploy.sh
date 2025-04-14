@@ -56,10 +56,21 @@ OS_ID=387 # Ubuntu 20.04
 
 # Function to create SSH key in Vultr account
 create_ssh_key_in_vultr() {
-  # Check if we have an SSH public key
-  if [ -z "$NT_SSH_PUBLIC_KEY" ]; then
-    echo "No SSH public key available. Cannot create SSH key in Vultr."
+  # Check if we have a path to the SSH public key file
+  if [ -z "$SSH_KEY_PATH" ]; then
+    echo "No SSH key path available. Cannot create SSH key in Vultr."
     return 1
+  fi
+  
+  # Make sure we have the public key content
+  if [ -z "$NT_SSH_PUBLIC_KEY" ]; then
+    if [ -f "${SSH_KEY_PATH}.pub" ]; then
+      NT_SSH_PUBLIC_KEY=$(cat "${SSH_KEY_PATH}.pub")
+      echo "Read SSH public key from ${SSH_KEY_PATH}.pub"
+    else
+      echo "No SSH public key found at ${SSH_KEY_PATH}.pub"
+      return 1
+    fi
   fi
 
   local key_name="birdbgp-$(date +%Y%m%d-%H%M%S)"
@@ -207,6 +218,65 @@ create_instance() {
   return 0
 }
 
+# Function to check for existing reserved IPs
+check_existing_reserved_ip() {
+  local region=$1
+  local ip_type=$2  # v4 or v6
+  local label="floating-${ip_type/v/ip}-$region"
+  
+  echo "Checking for existing reserved IP with label: $label in region $region..."
+  
+  existing_ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}")
+  
+  # Debug: show response format
+  echo "Reserved IPs API response format sample (truncated):"
+  echo "$existing_ips" | head -n 30 | tail -n 10
+  
+  # Check if response is valid JSON
+  if ! echo "$existing_ips" | grep -q "\"reserved_ips\""; then
+    echo "Error: Invalid response from reserved-ips API"
+    echo "Response: $existing_ips"
+    return 1
+  fi
+  
+  # Use jq-like parsing with grep and sed to extract matching reserved IPs
+  echo "Searching for reserved IPs matching label '$label' and region '$region'..."
+  
+  # Extract the reserved_ips array
+  reserved_ips_array=$(echo "$existing_ips" | sed -n 's/.*"reserved_ips":\[\([^]]*\)\].*/\1/p')
+  
+  # Process each reserved IP object
+  if echo "$reserved_ips_array" | grep -q "$label"; then
+    echo "Found at least one reserved IP with matching label pattern"
+    
+    # Extract the ID and subnet from the response
+    local existing_id=""
+    local existing_ip=""
+    
+    # Extract all reserved IP objects and process them
+    echo "$existing_ips" | grep -o '{[^{]*"id":"[^"]*"[^}]*"label":"[^"]*"[^}]*}' | while read -r ip_obj; do
+      # Check if this object has our label and region
+      if echo "$ip_obj" | grep -q "\"label\":\"$label\"" && echo "$ip_obj" | grep -q "\"region\":\"$region\""; then
+        existing_id=$(echo "$ip_obj" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+        existing_ip=$(echo "$ip_obj" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
+        
+        echo "Found exact match! Reserved IP: $existing_ip (ID: $existing_id)"
+        
+        # Save the found IP and ID to files
+        echo "$existing_id" > "floating_${ip_type/v/ip}_${region}_id.txt"
+        echo "$existing_ip" > "floating_${ip_type/v/ip}_${region}.txt"
+        
+        # Return success
+        return 0
+      fi
+    done
+  fi
+  
+  echo "No matching reserved IP found, will create a new one"
+  return 1
+}
+
 # Function to create a floating IP
 create_floating_ip() {
   local instance_id=$1
@@ -221,43 +291,139 @@ create_floating_ip() {
     api_ip_type="v6"
   fi
   
-  response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips" \
-    -H "Authorization: Bearer ${VULTR_API_KEY}" \
-    -H "Content-Type: application/json" \
-    --data "{
-      \"region\": \"$region\",
-      \"ip_type\": \"$api_ip_type\",
-      \"label\": \"floating-$ip_type-$region\"
-    }")
-  
-  # Extract floating IP details
-  # The reserved IP response format changed - the IP is now in "subnet" field
-  floating_ip_id=$(echo $response | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-  
-  # Check for "subnet" field first, then fall back to "ip" field if not found
-  floating_ip=$(echo $response | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
-  if [ -z "$floating_ip" ]; then
-    floating_ip=$(echo $response | grep -o '"ip":"[^"]*' | cut -d'"' -f4)
+  # Check if we already have a reserved IP for this region/type
+  if check_existing_reserved_ip "$region" "$api_ip_type"; then
+    floating_ip_id=$(cat "floating_${ip_type}_${region}_id.txt")
+    floating_ip=$(cat "floating_${ip_type}_${region}.txt")
+    
+    echo "Using existing floating IP: $floating_ip (ID: $floating_ip_id)"
+  else
+    # Create a new reserved IP
+    echo "Creating new reserved IP for $ip_type in region $region..."
+    response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips" \
+      -H "Authorization: Bearer ${VULTR_API_KEY}" \
+      -H "Content-Type: application/json" \
+      --data "{
+        \"region\": \"$region\",
+        \"ip_type\": \"$api_ip_type\",
+        \"label\": \"floating-$ip_type-$region\"
+      }")
+    
+    echo "Reserved IP creation response: $response"
+    
+    # Handle various response formats
+    if [[ "$response" == *"error"* ]]; then
+      echo "Error creating reserved IP: $response"
+      return 1
+    fi
+    
+    # Extract floating IP details - handle different response formats
+    floating_ip_id=""
+    floating_ip=""
+    
+    # Format 1: Nested in reserved_ip object
+    if [[ "$response" == *'"reserved_ip":'* ]]; then
+      echo "Parsing response format 1 (nested reserved_ip object)"
+      # Extract the nested object
+      reserved_ip_obj=$(echo "$response" | grep -o '"reserved_ip":{[^}]*}' | sed 's/"reserved_ip"://g')
+      
+      # Extract fields from the object
+      floating_ip_id=$(echo "$reserved_ip_obj" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+      floating_ip=$(echo "$reserved_ip_obj" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
+      
+      echo "Extracted from nested object - ID: $floating_ip_id, IP: $floating_ip"
+    fi
+    
+    # Format 2: Direct in response
+    if [ -z "$floating_ip_id" ] || [ -z "$floating_ip" ]; then
+      echo "Trying parse format 2 (direct response)"
+      floating_ip_id=$(echo "$response" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+      floating_ip=$(echo "$response" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
+      
+      echo "Extracted direct - ID: $floating_ip_id, IP: $floating_ip"
+    fi
+    
+    # Format 3: Alternative field names
+    if [ -z "$floating_ip" ]; then
+      echo "Trying parse format 3 (alternative field names)"
+      floating_ip=$(echo "$response" | grep -o '"ip":"[^"]*' | cut -d'"' -f4)
+      echo "Extracted alternative - IP: $floating_ip"
+    fi
+    
+    # Final validation
+    if [ -z "$floating_ip_id" ]; then
+      echo "Failed to extract reserved IP ID from response!"
+      echo "Raw response: $response"
+      return 1
+    fi
+    
+    if [ -z "$floating_ip" ]; then
+      echo "Failed to extract reserved IP address from response!"
+      echo "Raw response: $response"
+      return 1
+    fi
+    
+    # Save the IDs and IPs
+    echo "$floating_ip_id" > "floating_${ip_type}_${region}_id.txt"
+    echo "$floating_ip" > "floating_${ip_type}_${region}.txt"
+    
+    echo "Successfully created new floating IP: $floating_ip (ID: $floating_ip_id)"
   fi
-  
-  if [ -z "$floating_ip_id" ]; then
-    echo "Failed to create floating IP! Response: $response"
-    return 1
-  fi
-  
-  if [ -z "$floating_ip" ]; then
-    echo "Warning: Could not extract floating IP address from response. Using ID only."
-    echo "Response: $response"
-    # Continue anyway since we have the ID
-  fi
-  
-  echo "Floating $ip_type created: $floating_ip (ID: $floating_ip_id)"
-  echo "$floating_ip_id" > "floating_${ip_type}_${region}_id.txt"
-  echo "$floating_ip" > "floating_${ip_type}_${region}.txt"
   
   # Attach floating IP to instance
   echo "Attaching floating $ip_type to instance $instance_id..."
+  echo "Floating IP ID: $floating_ip_id, Instance ID: $instance_id"
   
+  # Check if the instance is fully provisioned and running
+  echo "Verifying instance is ready for IP attachment..."
+  instance_status=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances/$instance_id" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}" | grep -o '"status":"[^"]*' | cut -d'"' -f4)
+  
+  echo "Instance status: $instance_status"
+  
+  # Wait for the instance to be fully ready (ok status)
+  max_attempts=10
+  attempt=1
+  while [ "$instance_status" != "ok" ] && [ $attempt -le $max_attempts ]; do
+    echo "Instance not ready (status: $instance_status). Waiting 10 seconds (attempt $attempt/$max_attempts)..."
+    sleep 10
+    instance_status=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances/$instance_id" \
+      -H "Authorization: Bearer ${VULTR_API_KEY}" | grep -o '"status":"[^"]*' | cut -d'"' -f4)
+    echo "Updated instance status: $instance_status"
+    attempt=$((attempt + 1))
+  done
+  
+  # Give additional time for services to stabilize
+  echo "Waiting 10 seconds before attempting to attach reserved IP..."
+  sleep 10
+  
+  # First check if the IP is already attached
+  echo "Checking if IP is already attached to any instance..."
+  current_status=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips/$floating_ip_id" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}")
+  
+  current_instance=$(echo "$current_status" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4)
+  
+  if [ ! -z "$current_instance" ] && [ "$current_instance" = "$instance_id" ]; then
+    echo "Floating IP is already attached to the correct instance $instance_id"
+    return 0
+  elif [ ! -z "$current_instance" ]; then
+    echo "Warning: Floating IP is attached to a different instance: $current_instance"
+    echo "Will attempt to detach first..."
+    
+    # Detach from current instance
+    detach_response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips/$floating_ip_id/detach" \
+      -H "Authorization: Bearer ${VULTR_API_KEY}")
+    
+    echo "Detach response: $detach_response"
+    
+    # Wait for detachment to complete
+    echo "Waiting 15 seconds for detachment to complete..."
+    sleep 15
+  fi
+  
+  # First attempt - use the reserved-ips endpoint
+  echo "Attempting to attach IP using reserved-ips/$floating_ip_id/attach endpoint..."
   attach_response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips/$floating_ip_id/attach" \
     -H "Authorization: Bearer ${VULTR_API_KEY}" \
     -H "Content-Type: application/json" \
@@ -265,12 +431,18 @@ create_floating_ip() {
       \"instance_id\": \"$instance_id\"
     }")
   
+  echo "Attachment response: $attach_response"
+  
   # Check if attachment was successful
   if [[ "$attach_response" == *"error"* ]]; then
     echo "Warning: Error attaching floating IP. Response: $attach_response"
     echo "Will try alternate API endpoint..."
     
+    # Wait before trying alternate endpoint
+    sleep 10
+    
     # Try the alternate endpoint format
+    echo "Attempting to attach IP using instances/$instance_id/reserved-ips endpoint..."
     alt_attach_response=$(curl -s -X POST "${VULTR_API_ENDPOINT}instances/$instance_id/reserved-ips" \
       -H "Authorization: Bearer ${VULTR_API_KEY}" \
       -H "Content-Type: application/json" \
@@ -278,14 +450,48 @@ create_floating_ip() {
         \"reserved_ip\": \"$floating_ip_id\"
       }")
       
+    echo "Alternate attachment response: $alt_attach_response"
+    
     if [[ "$alt_attach_response" == *"error"* ]]; then
       echo "Error with alternate endpoint too. Response: $alt_attach_response"
-      echo "You may need to manually attach the floating IP in the Vultr console."
+      echo "Checking current attachment status to see if it succeeded despite errors..."
+      
+      # Check if the IP is already attached (sometimes API returns error but it works)
+      ip_status=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips/$floating_ip_id" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}")
+      
+      echo "Reserved IP status: $ip_status"
+      
+      attached_instance=$(echo "$ip_status" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4)
+      if [ "$attached_instance" = "$instance_id" ]; then
+        echo "IP appears to be correctly attached to instance $instance_id despite API errors!"
+      else
+        echo "IP attachment failed. You may need to manually attach the floating IP in the Vultr console."
+        # Continue anyway, as this won't prevent the rest of the deployment
+      fi
     else
       echo "Floating IP attached using alternate endpoint."
     fi
   else
     echo "Floating IP attached successfully."
+  fi
+  
+  # Final verification
+  echo "Performing final verification of IP attachment..."
+  sleep 5
+  final_status=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips/$floating_ip_id" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}")
+  
+  final_instance=$(echo "$final_status" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4)
+  
+  if [ "$final_instance" = "$instance_id" ]; then
+    echo "Verified: Floating IP $floating_ip is correctly attached to instance $instance_id"
+    return 0
+  else
+    echo "Warning: Final verification shows floating IP is not attached to expected instance."
+    echo "Current status: $final_status"
+    echo "Expected instance: $instance_id, Current instance: $final_instance"
+    echo "Continuing deployment, but manual verification may be needed."
   fi
   
   return 0
