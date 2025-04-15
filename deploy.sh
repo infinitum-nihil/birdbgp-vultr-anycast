@@ -2390,16 +2390,38 @@ cleanup_reserved_ips() {
   reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
     -H "Authorization: Bearer ${VULTR_API_KEY}")
   
-  # Extract IPs that match our naming pattern (floating-ipv4-* or floating-ipv6-*)
+  # Parameter to control whether to delete all IPs or just unused ones
+  local delete_all=${1:-false}
+  
+  # Show how many IPs we found
+  local total_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
+  log "Found $total_count total reserved IPs in your account" "INFO"
+  
+  # First handle IPs with our recognized pattern
+  log "Processing reserved IPs matching our naming pattern..." "INFO"
   echo "$reserved_ips_response" | grep -o '{[^{]*"id":"[^"]*"[^}]*"label":"floating-ip[^"]*"[^}]*}' | while read -r ip_obj; do
     ip_id=$(echo "$ip_obj" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
     ip_label=$(echo "$ip_obj" | grep -o '"label":"[^"]*' | cut -d'"' -f4)
     ip_subnet=$(echo "$ip_obj" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
     instance_id=$(echo "$ip_obj" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4)
     
-    # If instance_id is empty string or "null", it's not attached
-    if [ -z "$instance_id" ] || [ "$instance_id" = "null" ] || [ "$instance_id" = '""' ]; then
-      log "Deleting unused reserved IP: $ip_label - $ip_subnet (ID: $ip_id)" "INFO"
+    # If delete_all=true OR (instance_id is empty string or "null", it's not attached)
+    if [ "$delete_all" = "true" ] || [ -z "$instance_id" ] || [ "$instance_id" = "null" ] || [ "$instance_id" = '""' ]; then
+      if [ "$delete_all" = "true" ] && [ ! -z "$instance_id" ] && [ "$instance_id" != "null" ] && [ "$instance_id" != '""' ]; then
+        log "Detaching and deleting reserved IP: $ip_label - $ip_subnet (ID: $ip_id) from instance $instance_id" "INFO"
+        
+        # Detach first
+        detach_response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips/$ip_id/detach" \
+          -H "Authorization: Bearer ${VULTR_API_KEY}")
+        log "Detach response: $detach_response" "INFO"
+        
+        # Wait for detachment to complete
+        sleep 3
+      else
+        log "Deleting unused reserved IP: $ip_label - $ip_subnet (ID: $ip_id)" "INFO"
+      fi
+      
+      # Now delete the IP
       delete_response=$(curl -s -X DELETE "${VULTR_API_ENDPOINT}reserved-ips/$ip_id" \
         -H "Authorization: Bearer ${VULTR_API_KEY}")
       
@@ -2416,6 +2438,53 @@ cleanup_reserved_ips() {
     fi
   done
   
+  # Now look for any other IPs without labels or with non-standard labels, if delete_all=true
+  if [ "$delete_all" = "true" ]; then
+    log "Looking for other reserved IPs not matching our naming pattern..." "INFO"
+    echo "$reserved_ips_response" | grep -o '{[^}]*}' | while read -r ip_obj; do
+      # Skip if this is one of our labeled IPs we already processed
+      if [[ "$ip_obj" == *'"label":"floating-ip'* ]]; then
+        continue
+      fi
+      
+      ip_id=$(echo "$ip_obj" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+      if [ -z "$ip_id" ]; then
+        continue
+      fi
+      
+      ip_label=$(echo "$ip_obj" | grep -o '"label":"[^"]*' | cut -d'"' -f4 2>/dev/null || echo "no-label")
+      ip_subnet=$(echo "$ip_obj" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4 2>/dev/null || echo "unknown-ip")
+      instance_id=$(echo "$ip_obj" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4 2>/dev/null || echo "")
+      
+      # If it has an instance ID, detach first
+      if [ ! -z "$instance_id" ] && [ "$instance_id" != "null" ] && [ "$instance_id" != '""' ]; then
+        log "Detaching other reserved IP: $ip_label - $ip_subnet (ID: $ip_id) from instance $instance_id" "INFO"
+        
+        # Detach first
+        detach_response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips/$ip_id/detach" \
+          -H "Authorization: Bearer ${VULTR_API_KEY}")
+        log "Detach response: $detach_response" "INFO"
+        
+        # Wait for detachment to complete
+        sleep 3
+      fi
+      
+      # Now delete the IP
+      log "Deleting other reserved IP: $ip_label - $ip_subnet (ID: $ip_id)" "INFO"
+      delete_response=$(curl -s -X DELETE "${VULTR_API_ENDPOINT}reserved-ips/$ip_id" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}")
+      
+      if [ -z "$delete_response" ]; then
+        log "Successfully deleted reserved IP $ip_label" "INFO"
+      else
+        log "Failed to delete reserved IP $ip_label: $delete_response" "WARN"
+      fi
+      
+      # Wait a moment between deletions to avoid API rate limits
+      sleep 1
+    done
+  fi
+  
   log "Reserved IP cleanup completed" "INFO"
 }
 
@@ -2430,7 +2499,7 @@ deploy() {
   # Clean up unused reserved IPs if enabled
   if [ "$CLEANUP_RESERVED_IPS" = "true" ]; then
     log "Running pre-deployment cleanup of unused reserved IPs..." "INFO"
-    cleanup_reserved_ips
+    cleanup_reserved_ips "false"  # Only delete unused IPs
   fi
   
   # Check if existing VM is shut down
@@ -2798,6 +2867,10 @@ EOT
 # Function to clean up resources on failure
 cleanup_resources() {
   echo "Starting cleanup of created resources..."
+  
+  # Clean up all reserved IPs (including attached ones)
+  echo "Cleaning up all reserved IPs..."
+  cleanup_reserved_ips "true"
   
   # Clean up instances if they were created
   for prefix in "ewr-ipv4-bgp-primary-1c1g" "mia-ipv4-bgp-secondary-1c1g" "ord-ipv4-bgp-tertiary-1c1g" "lax-ipv6-bgp-1c1g"; do
@@ -3222,7 +3295,12 @@ case "$1" in
     cleanup_old_vm
     ;;
   cleanup-reserved-ips)
-    cleanup_reserved_ips
+    read -p "Delete ALL reserved IPs (including attached ones)? (y/n, default: n): " delete_all
+    if [[ $delete_all =~ ^[Yy]$ ]]; then
+      cleanup_reserved_ips "true"  # Delete all IPs, including attached ones
+    else
+      cleanup_reserved_ips "false"  # Only delete unused IPs
+    fi
     ;;
   cleanup)
     echo "This will clean up ALL resources created by this script."
