@@ -40,6 +40,9 @@ set -o pipefail  # Ensure pipeline errors are caught
 # - 3 servers for IPv4 BGP with path prepending for failover priority
 # - 1 server for IPv6 BGP
 
+# Set default for cleanup behavior (clean old IPs before deployment)
+CLEANUP_RESERVED_IPS=${CLEANUP_RESERVED_IPS:-true}
+
 # Create error and success counters for tracking deployment issues
 ERROR_COUNT=0
 SUCCESS_COUNT=0
@@ -2276,6 +2279,43 @@ check_existing_vm() {
   fi
 }
 
+# Function to clean up reserved IPs
+cleanup_reserved_ips() {
+  log "Cleaning up unused reserved IPs to stay within Vultr limits..." "INFO"
+  
+  # Get all reserved IPs
+  reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}")
+  
+  # Extract IPs that match our naming pattern (floating-ipv4-* or floating-ipv6-*)
+  echo "$reserved_ips_response" | grep -o '{[^{]*"id":"[^"]*"[^}]*"label":"floating-ip[^"]*"[^}]*}' | while read -r ip_obj; do
+    ip_id=$(echo "$ip_obj" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    ip_label=$(echo "$ip_obj" | grep -o '"label":"[^"]*' | cut -d'"' -f4)
+    ip_subnet=$(echo "$ip_obj" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
+    instance_id=$(echo "$ip_obj" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4)
+    
+    # If instance_id is empty string or "null", it's not attached
+    if [ -z "$instance_id" ] || [ "$instance_id" = "null" ] || [ "$instance_id" = '""' ]; then
+      log "Deleting unused reserved IP: $ip_label - $ip_subnet (ID: $ip_id)" "INFO"
+      delete_response=$(curl -s -X DELETE "${VULTR_API_ENDPOINT}reserved-ips/$ip_id" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}")
+      
+      if [ -z "$delete_response" ]; then
+        log "Successfully deleted reserved IP $ip_label" "INFO"
+      else
+        log "Failed to delete reserved IP $ip_label: $delete_response" "WARN"
+      fi
+      
+      # Wait a moment between deletions to avoid API rate limits
+      sleep 1
+    else
+      log "Skipping attached reserved IP: $ip_label (attached to instance $instance_id)" "INFO"
+    fi
+  done
+  
+  log "Reserved IP cleanup completed" "INFO"
+}
+
 # Main deployment function
 deploy() {
   # Set up error handling
@@ -2283,6 +2323,12 @@ deploy() {
   trap 'echo "Error detected, cleaning up resources..."; cleanup_resources' ERR
   
   echo "Starting Vultr BGP Anycast deployment..."
+  
+  # Clean up unused reserved IPs if enabled
+  if [ "$CLEANUP_RESERVED_IPS" = "true" ]; then
+    log "Running pre-deployment cleanup of unused reserved IPs..." "INFO"
+    cleanup_reserved_ips
+  fi
   
   # Check if existing VM is shut down
   check_existing_vm || exit 1
@@ -3024,6 +3070,9 @@ case "$1" in
   cleanup-old-vm)
     cleanup_old_vm
     ;;
+  cleanup-reserved-ips)
+    cleanup_reserved_ips
+    ;;
   cleanup)
     echo "This will clean up ALL resources created by this script."
     echo "WARNING: This action cannot be undone!"
@@ -3035,22 +3084,23 @@ case "$1" in
     fi
     ;;
   *)
-    echo "Usage: $0 {deploy|monitor|test-failover|test-ssh|rtbh|aspa|community|cleanup-old-vm|cleanup}"
+    echo "Usage: $0 {deploy|monitor|test-failover|test-ssh|rtbh|aspa|community|cleanup-old-vm|cleanup-reserved-ips|cleanup}"
     echo "       $0 test-ssh <hostname_or_ip> [username]"
     echo "       $0 rtbh <server_ip> <target_ip>"
     echo "       $0 aspa <server_ip>"
     echo "       $0 community <server_ip> <community_type> [target_as]"
     echo ""
     echo "Commands:"
-    echo "  deploy         - Deploy the BGP Anycast infrastructure"
-    echo "  monitor        - Monitor the status of the BGP Anycast infrastructure"
-    echo "  test-failover  - Test failover by stopping BIRD on the primary server"
-    echo "  test-ssh       - Test SSH connectivity to a server"
-    echo "  rtbh           - Configure Remote Triggered Black Hole for DDoS mitigation"
-    echo "  aspa           - Configure ASPA validation for enhanced security"
-    echo "  community      - Apply BGP communities to manipulate routing"
-    echo "  cleanup-old-vm - Clean up the old birdbgp-losangeles VM after successful deployment"
-    echo "  cleanup        - Clean up ALL resources created by this script"
+    echo "  deploy              - Deploy the BGP Anycast infrastructure"
+    echo "  monitor             - Monitor the status of the BGP Anycast infrastructure"
+    echo "  test-failover       - Test failover by stopping BIRD on the primary server"
+    echo "  test-ssh            - Test SSH connectivity to a server"
+    echo "  rtbh                - Configure Remote Triggered Black Hole for DDoS mitigation"
+    echo "  aspa                - Configure ASPA validation for enhanced security"
+    echo "  community           - Apply BGP communities to manipulate routing"
+    echo "  cleanup-old-vm      - Clean up the old birdbgp-losangeles VM after successful deployment"
+    echo "  cleanup-reserved-ips - Clean up unused floating/reserved IPs to stay within account limits"
+    echo "  cleanup             - Clean up ALL resources created by this script"
     exit 1
     ;;
 esac
