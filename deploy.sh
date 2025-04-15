@@ -40,19 +40,122 @@ set -o pipefail  # Ensure pipeline errors are caught
 # - 3 servers for IPv4 BGP with path prepending for failover priority
 # - 1 server for IPv6 BGP
 
-# Set default for cleanup behavior (clean old IPs before deployment)
+# Set default configuration options
 CLEANUP_RESERVED_IPS=${CLEANUP_RESERVED_IPS:-true}
+IP_STACK_MODE=${IP_STACK_MODE:-dual}
 
 # Create error and success counters for tracking deployment issues
 ERROR_COUNT=0
 SUCCESS_COUNT=0
 
-# Source environment variables
+# Interactive setup function for .env configuration
+setup_env() {
+  if [ -f ".env" ]; then
+    read -p ".env file already exists. Do you want to reconfigure it? (y/n): " reconfigure
+    if [[ ! $reconfigure =~ ^[Yy]$ ]]; then
+      return 0
+    fi
+  fi
+
+  echo "Setting up .env configuration..."
+  echo "--------------------------------"
+  
+  # Vultr API key
+  read -p "Enter your Vultr API key: " vultr_api_key
+  
+  # BGP configuration
+  read -p "Enter your AS number (e.g., 65000): " as_number
+  read -p "Enter your IPv4 BGP range (e.g., 192.0.2.0/24): " ipv4_range
+  read -p "Enter your IPv6 BGP range (e.g., 2001:db8::/48): " ipv6_range
+  read -p "Enter your Vultr BGP password: " bgp_password
+  
+  # SSH key path
+  read -p "Enter the absolute path to your SSH private key: " ssh_key_path
+  
+  # Deployment options
+  read -p "Deploy with cloud-init? (y/n, default: y): " use_cloud_init
+  use_cloud_init=${use_cloud_init:-y}
+  if [[ $use_cloud_init =~ ^[Yy]$ ]]; then
+    use_cloud_init_value="true"
+  else
+    use_cloud_init_value="false"
+  fi
+  
+  read -p "Clean up unused reserved IPs before deployment? (y/n, default: y): " cleanup_ips
+  cleanup_ips=${cleanup_ips:-y}
+  if [[ $cleanup_ips =~ ^[Yy]$ ]]; then
+    cleanup_ips_value="true"
+  else
+    cleanup_ips_value="false"
+  fi
+  
+  echo "Select deployment mode:"
+  echo "1) Dual-stack (IPv4 + IPv6) [default]"
+  echo "2) IPv4 only"
+  echo "3) IPv6 only"
+  read -p "Enter your choice (1-3): " stack_choice
+  
+  case "${stack_choice:-1}" in
+    1) ip_stack_mode="dual" ;;
+    2) ip_stack_mode="ipv4" ;;
+    3) ip_stack_mode="ipv6" ;;
+    *) ip_stack_mode="dual" ;;  # Default to dual for invalid input
+  esac
+  
+  # Write to .env file
+  cat > .env << EOF
+# Environment variables for birdbgp deployment
+# Generated on $(date)
+
+# Vultr API credentials
+VULTR_API_KEY=${vultr_api_key}
+VULTR_API_ENDPOINT=https://api.vultr.com/v2/
+
+# BGP configuration
+OUR_AS=${as_number}
+OUR_IPV4_BGP_RANGE=${ipv4_range}
+OUR_IPV6_BGP_RANGE=${ipv6_range}
+VULTR_BGP_PASSWORD=${bgp_password}
+
+# SSH key configuration
+SSH_KEY_PATH=${ssh_key_path}
+
+# Deployment options
+USE_CLOUD_INIT=${use_cloud_init_value}
+CLEANUP_RESERVED_IPS=${cleanup_ips_value}
+IP_STACK_MODE=${ip_stack_mode}
+EOF
+
+  echo ".env file created successfully!"
+  
+  # Export the variables for the current session
+  export VULTR_API_KEY=${vultr_api_key}
+  export VULTR_API_ENDPOINT="https://api.vultr.com/v2/"
+  export OUR_AS=${as_number}
+  export OUR_IPV4_BGP_RANGE=${ipv4_range}
+  export OUR_IPV6_BGP_RANGE=${ipv6_range}
+  export VULTR_BGP_PASSWORD=${bgp_password}
+  export SSH_KEY_PATH=${ssh_key_path}
+  export USE_CLOUD_INIT=${use_cloud_init_value}
+  export CLEANUP_RESERVED_IPS=${cleanup_ips_value}
+  export IP_STACK_MODE=${ip_stack_mode}
+  
+  return 0
+}
+
+# Source or setup environment variables
 if [ -f ".env" ]; then
   export $(grep -v '^#' .env | xargs)
 else
-  echo "Error: .env file not found!"
-  exit 1
+  echo "Error: .env file not found."
+  echo "Would you like to set up your configuration now?"
+  read -p "Set up configuration? (y/n): " setup_now
+  if [[ $setup_now =~ ^[Yy]$ ]]; then
+    setup_env
+  else
+    echo "Please create a .env file based on .env.sample before running this script."
+    exit 1
+  fi
 fi
 
 # Check required variables
@@ -2333,19 +2436,64 @@ deploy() {
   # Check if existing VM is shut down
   check_existing_vm || exit 1
   
-  # Create IPv4 instances (3 servers as per documentation)
-  create_instance "${IPV4_REGIONS[0]}" "ewr-ipv4-bgp-primary-1c1g" "1" "false" || { echo "Failed to create primary instance"; exit 1; }
-  create_instance "${IPV4_REGIONS[1]}" "mia-ipv4-bgp-secondary-1c1g" "2" "false" || { echo "Failed to create secondary instance"; exit 1; }
-  create_instance "${IPV4_REGIONS[2]}" "ord-ipv4-bgp-tertiary-1c1g" "3" "false" || { echo "Failed to create tertiary instance"; exit 1; }
-  
-  # Create IPv6 instance (1 server as per documentation)
-  create_instance "${IPV6_REGION}" "lax-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
-  
-  # Create floating IPs for each instance
-  create_floating_ip "$(cat ewr-ipv4-bgp-primary-1c1g_id.txt)" "${IPV4_REGIONS[0]}" "ipv4" || { echo "Failed to create floating IP for primary instance"; exit 1; }
-  create_floating_ip "$(cat mia-ipv4-bgp-secondary-1c1g_id.txt)" "${IPV4_REGIONS[1]}" "ipv4" || { echo "Failed to create floating IP for secondary instance"; exit 1; }
-  create_floating_ip "$(cat ord-ipv4-bgp-tertiary-1c1g_id.txt)" "${IPV4_REGIONS[2]}" "ipv4" || { echo "Failed to create floating IP for tertiary instance"; exit 1; }
-  create_floating_ip "$(cat lax-ipv6-bgp-1c1g_id.txt)" "${IPV6_REGION}" "ipv6" || { echo "Failed to create floating IP for IPv6 instance"; exit 1; }
+  # Deploy according to selected IP stack mode
+  case "${IP_STACK_MODE:-dual}" in
+    ipv4)
+      log "Deploying IPv4-only BGP Anycast infrastructure..." "INFO"
+      
+      # Create IPv4 instances (3 servers as per documentation)
+      create_instance "${IPV4_REGIONS[0]}" "ewr-ipv4-bgp-primary-1c1g" "1" "false" || { echo "Failed to create primary instance"; exit 1; }
+      create_instance "${IPV4_REGIONS[1]}" "mia-ipv4-bgp-secondary-1c1g" "2" "false" || { echo "Failed to create secondary instance"; exit 1; }
+      create_instance "${IPV4_REGIONS[2]}" "ord-ipv4-bgp-tertiary-1c1g" "3" "false" || { echo "Failed to create tertiary instance"; exit 1; }
+      
+      # Create floating IPs for IPv4 instances
+      create_floating_ip "$(cat ewr-ipv4-bgp-primary-1c1g_id.txt)" "${IPV4_REGIONS[0]}" "ipv4" || { echo "Failed to create floating IP for primary instance"; exit 1; }
+      create_floating_ip "$(cat mia-ipv4-bgp-secondary-1c1g_id.txt)" "${IPV4_REGIONS[1]}" "ipv4" || { echo "Failed to create floating IP for secondary instance"; exit 1; }
+      create_floating_ip "$(cat ord-ipv4-bgp-tertiary-1c1g_id.txt)" "${IPV4_REGIONS[2]}" "ipv4" || { echo "Failed to create floating IP for tertiary instance"; exit 1; }
+      
+      # Generate BIRD configurations
+      generate_ipv4_bird_config "ewr-ipv4-primary" "$(cat ewr-ipv4-bgp-primary-1c1g_ipv4.txt)" 0
+      generate_ipv4_bird_config "mia-ipv4-secondary" "$(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt)" 1
+      generate_ipv4_bird_config "ord-ipv4-tertiary" "$(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt)" 2
+      ;;
+      
+    ipv6)
+      log "Deploying IPv6-only BGP Anycast infrastructure..." "INFO"
+      
+      # Create IPv6 instance
+      create_instance "${IPV6_REGION}" "lax-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
+      
+      # Create floating IP for IPv6 instance
+      create_floating_ip "$(cat lax-ipv6-bgp-1c1g_id.txt)" "${IPV6_REGION}" "ipv6" || { echo "Failed to create floating IP for IPv6 instance"; exit 1; }
+      
+      # Generate BIRD configuration
+      generate_ipv6_bird_config "lax-ipv6" "$(cat lax-ipv6-bgp-1c1g_ipv4.txt)" "$(cat lax-ipv6-bgp-1c1g_ipv6.txt)"
+      ;;
+      
+    dual|*)
+      log "Deploying dual-stack BGP Anycast infrastructure..." "INFO"
+      
+      # Create IPv4 instances (3 servers as per documentation)
+      create_instance "${IPV4_REGIONS[0]}" "ewr-ipv4-bgp-primary-1c1g" "1" "false" || { echo "Failed to create primary instance"; exit 1; }
+      create_instance "${IPV4_REGIONS[1]}" "mia-ipv4-bgp-secondary-1c1g" "2" "false" || { echo "Failed to create secondary instance"; exit 1; }
+      create_instance "${IPV4_REGIONS[2]}" "ord-ipv4-bgp-tertiary-1c1g" "3" "false" || { echo "Failed to create tertiary instance"; exit 1; }
+      
+      # Create IPv6 instance (1 server as per documentation)
+      create_instance "${IPV6_REGION}" "lax-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
+      
+      # Create floating IPs for each instance
+      create_floating_ip "$(cat ewr-ipv4-bgp-primary-1c1g_id.txt)" "${IPV4_REGIONS[0]}" "ipv4" || { echo "Failed to create floating IP for primary instance"; exit 1; }
+      create_floating_ip "$(cat mia-ipv4-bgp-secondary-1c1g_id.txt)" "${IPV4_REGIONS[1]}" "ipv4" || { echo "Failed to create floating IP for secondary instance"; exit 1; }
+      create_floating_ip "$(cat ord-ipv4-bgp-tertiary-1c1g_id.txt)" "${IPV4_REGIONS[2]}" "ipv4" || { echo "Failed to create floating IP for tertiary instance"; exit 1; }
+      create_floating_ip "$(cat lax-ipv6-bgp-1c1g_id.txt)" "${IPV6_REGION}" "ipv6" || { echo "Failed to create floating IP for IPv6 instance"; exit 1; }
+      
+      # Generate BIRD configurations
+      generate_ipv4_bird_config "ewr-ipv4-primary" "$(cat ewr-ipv4-bgp-primary-1c1g_ipv4.txt)" 0
+      generate_ipv4_bird_config "mia-ipv4-secondary" "$(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt)" 1
+      generate_ipv4_bird_config "ord-ipv4-tertiary" "$(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt)" 2
+      generate_ipv6_bird_config "lax-ipv6" "$(cat lax-ipv6-bgp-1c1g_ipv4.txt)" "$(cat lax-ipv6-bgp-1c1g_ipv6.txt)"
+      ;;
+  esac
   
   # Store the existing VM ID for potential cleanup
   existing_vm=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances?label=birdbgp-losangeles" \
@@ -3024,6 +3172,9 @@ EOF
 
 # Parse command line arguments
 case "$1" in
+  setup)
+    setup_env
+    ;;
   deploy)
     deploy
     ;;
@@ -3084,13 +3235,14 @@ case "$1" in
     fi
     ;;
   *)
-    echo "Usage: $0 {deploy|monitor|test-failover|test-ssh|rtbh|aspa|community|cleanup-old-vm|cleanup-reserved-ips|cleanup}"
+    echo "Usage: $0 {setup|deploy|monitor|test-failover|test-ssh|rtbh|aspa|community|cleanup-old-vm|cleanup-reserved-ips|cleanup}"
     echo "       $0 test-ssh <hostname_or_ip> [username]"
     echo "       $0 rtbh <server_ip> <target_ip>"
     echo "       $0 aspa <server_ip>"
     echo "       $0 community <server_ip> <community_type> [target_as]"
     echo ""
     echo "Commands:"
+    echo "  setup               - Set up or reconfigure .env file interactively"
     echo "  deploy              - Deploy the BGP Anycast infrastructure"
     echo "  monitor             - Monitor the status of the BGP Anycast infrastructure"
     echo "  test-failover       - Test failover by stopping BIRD on the primary server"
