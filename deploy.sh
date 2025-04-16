@@ -78,6 +78,269 @@ IP_STACK_MODE=${IP_STACK_MODE:-dual}
 ERROR_COUNT=0
 SUCCESS_COUNT=0
 
+# Deployment state management
+DEPLOYMENT_STATE_FILE="deployment_state.json"
+
+# Deployment stages - used for resuming/detecting deployment progress
+STAGE_INIT=0             # Initial state
+STAGE_SERVERS_CREATED=1  # VMs are created
+STAGE_IPS_CREATED=2      # Floating IPs are created
+STAGE_IPS_ATTACHED=3     # Floating IPs are attached to servers
+STAGE_BIRD_CONFIGS=4     # BIRD configs are generated
+STAGE_CONFIGS_DEPLOYED=5 # BIRD configs deployed to servers
+STAGE_COMPLETE=6         # Deployment completed successfully
+
+# Arrays to store resource information
+IPV4_INSTANCES=()
+IPV4_ADDRESSES=()
+IPV6_INSTANCE=""
+IPV6_ADDRESS=""
+FLOATING_IPV4_IDS=()
+FLOATING_IPV6_ID=""
+
+# Save the current deployment state
+save_deployment_state() {
+  local stage=$1
+  local message="$2"
+  
+  log "Saving deployment state: $message (Stage $stage)" "INFO"
+  
+  # Gather data about current resources
+  local state_data="{"
+  state_data+="\"stage\": $stage,"
+  state_data+="\"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\","
+  state_data+="\"message\": \"$message\","
+  
+  # Add IPv4 information if available
+  if [ "${#IPV4_INSTANCES[@]}" -gt 0 ]; then
+    state_data+="\"ipv4_instances\": ["
+    for i in "${!IPV4_INSTANCES[@]}"; do
+      if [ $i -gt 0 ]; then state_data+=","; fi
+      state_data+="{\"id\": \"${IPV4_INSTANCES[$i]}\", \"ip\": \"${IPV4_ADDRESSES[$i]}\", \"region\": \"${IPV4_REGIONS[$i]}\"}"
+    done
+    state_data+="],"
+  else
+    state_data+="\"ipv4_instances\": [],"
+  fi
+  
+  # Add IPv6 information if available
+  if [ -n "$IPV6_INSTANCE" ]; then
+    state_data+="\"ipv6_instance\": {\"id\": \"$IPV6_INSTANCE\", \"ip\": \"$IPV6_ADDRESS\", \"region\": \"$IPV6_REGION\"},"
+  else
+    state_data+="\"ipv6_instance\": null,"
+  fi
+  
+  # Add floating IP information if available
+  if [ "${#FLOATING_IPV4_IDS[@]}" -gt 0 ]; then
+    state_data+="\"floating_ipv4_ids\": ["
+    for i in "${!FLOATING_IPV4_IDS[@]}"; do
+      if [ $i -gt 0 ]; then state_data+=","; fi
+      state_data+="\"${FLOATING_IPV4_IDS[$i]}\""
+    done
+    state_data+="],"
+  else
+    state_data+="\"floating_ipv4_ids\": [],"
+  fi
+  
+  if [ -n "$FLOATING_IPV6_ID" ]; then
+    state_data+="\"floating_ipv6_id\": \"$FLOATING_IPV6_ID\""
+  else
+    state_data+="\"floating_ipv6_id\": null"
+  fi
+  
+  state_data+="}"
+  
+  echo "$state_data" > "$DEPLOYMENT_STATE_FILE"
+  log "Deployment state saved to $DEPLOYMENT_STATE_FILE" "INFO"
+}
+
+# Load the current deployment state
+load_deployment_state() {
+  if [ -f "$DEPLOYMENT_STATE_FILE" ]; then
+    log "Loading deployment state from $DEPLOYMENT_STATE_FILE" "INFO"
+    local stage=$(grep -o '"stage": [0-9]*' "$DEPLOYMENT_STATE_FILE" | cut -d':' -f2 | tr -d ' ')
+    local message=$(grep -o '"message": "[^"]*"' "$DEPLOYMENT_STATE_FILE" | cut -d'"' -f4)
+    
+    # Parse instance IDs and IPs from state file
+    IPV4_INSTANCES=()
+    IPV4_ADDRESSES=()
+    IPV6_INSTANCE=""
+    IPV6_ADDRESS=""
+    FLOATING_IPV4_IDS=()
+    FLOATING_IPV6_ID=""
+    
+    # Extract IPv4 instance info
+    if grep -q '"ipv4_instances":' "$DEPLOYMENT_STATE_FILE"; then
+      while read -r instance_line; do
+        local instance_id=$(echo "$instance_line" | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
+        local instance_ip=$(echo "$instance_line" | grep -o '"ip": "[^"]*"' | cut -d'"' -f4)
+        
+        if [ -n "$instance_id" ] && [ -n "$instance_ip" ]; then
+          IPV4_INSTANCES+=("$instance_id")
+          IPV4_ADDRESSES+=("$instance_ip")
+        fi
+      done < <(grep -o '{[^}]*"id": "[^"]*"[^}]*}' "$DEPLOYMENT_STATE_FILE")
+    fi
+    
+    # Extract IPv6 instance info
+    if grep -q '"ipv6_instance":' "$DEPLOYMENT_STATE_FILE" && ! grep -q '"ipv6_instance": null' "$DEPLOYMENT_STATE_FILE"; then
+      IPV6_INSTANCE=$(grep -o '"ipv6_instance": {[^}]*}' "$DEPLOYMENT_STATE_FILE" | grep -o '"id": "[^"]*"' | cut -d'"' -f4)
+      IPV6_ADDRESS=$(grep -o '"ipv6_instance": {[^}]*}' "$DEPLOYMENT_STATE_FILE" | grep -o '"ip": "[^"]*"' | cut -d'"' -f4)
+    fi
+    
+    # Extract floating IP info
+    if grep -q '"floating_ipv4_ids":' "$DEPLOYMENT_STATE_FILE" && ! grep -q '"floating_ipv4_ids": \[\]' "$DEPLOYMENT_STATE_FILE"; then
+      while read -r id; do
+        FLOATING_IPV4_IDS+=("$id")
+      done < <(grep -o '"floating_ipv4_ids": \[[^]]*\]' "$DEPLOYMENT_STATE_FILE" | grep -o '"[^"]*"' | cut -d'"' -f2)
+    fi
+    
+    if grep -q '"floating_ipv6_id":' "$DEPLOYMENT_STATE_FILE" && ! grep -q '"floating_ipv6_id": null' "$DEPLOYMENT_STATE_FILE"; then
+      FLOATING_IPV6_ID=$(grep -o '"floating_ipv6_id": "[^"]*"' "$DEPLOYMENT_STATE_FILE" | cut -d'"' -f4)
+    fi
+    
+    log "Loaded deployment state: $message (Stage $stage)" "INFO"
+    log "Found ${#IPV4_INSTANCES[@]} IPv4 instances and $([ -n "$IPV6_INSTANCE" ] && echo "1" || echo "0") IPv6 instance" "INFO"
+    log "Found ${#FLOATING_IPV4_IDS[@]} floating IPv4 IPs and $([ -n "$FLOATING_IPV6_ID" ] && echo "1" || echo "0") floating IPv6 IP" "INFO"
+    
+    return $stage
+  else
+    log "No previous deployment state found" "INFO"
+    return $STAGE_INIT
+  fi
+}
+
+# Detect the current deployment stage based on existing resources
+detect_deployment_stage() {
+  log "Detecting current deployment stage from existing resources..." "INFO"
+  
+  local stage=$STAGE_INIT
+  local ipv4_count=0
+  local ipv6_count=0
+  local ipv4_floating_count=0
+  local ipv6_floating_count=0
+  local ipv4_attached_count=0
+  local ipv6_attached_count=0
+  
+  # Check for VMs with our naming pattern
+  local instances_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}")
+  
+  # Build instance patterns dynamically from region variables
+  local primary_pattern="${IPV4_REGION_PRIMARY}-ipv4-bgp-primary"
+  local secondary_pattern="${IPV4_REGION_SECONDARY}-ipv4-bgp-secondary"
+  local tertiary_pattern="${IPV4_REGION_TERTIARY}-ipv4-bgp-tertiary"
+  local ipv6_pattern="${IPV6_REGION}-ipv6-bgp"
+  
+  if echo "$instances_response" | grep -q "\"label\":\"$primary_pattern"; then
+    ipv4_count=$((ipv4_count + 1))
+  fi
+  if echo "$instances_response" | grep -q "\"label\":\"$secondary_pattern"; then
+    ipv4_count=$((ipv4_count + 1))
+  fi
+  if echo "$instances_response" | grep -q "\"label\":\"$tertiary_pattern"; then
+    ipv4_count=$((ipv4_count + 1))
+  fi
+  if echo "$instances_response" | grep -q "\"label\":\"$ipv6_pattern"; then
+    ipv6_count=1
+  fi
+  
+  # Check for floating IPs
+  local reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}")
+  
+  # Count IPv4 floating IPs
+  while read -r ip_obj; do
+    if [ -n "$ip_obj" ]; then
+      local ip_type=$(echo "$ip_obj" | grep -o '"ip_type":"[^"]*' | cut -d'"' -f4)
+      local region=$(echo "$ip_obj" | grep -o '"region":"[^"]*' | cut -d'"' -f4)
+      local instance_id=$(echo "$ip_obj" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4 2>/dev/null || echo "")
+      
+      if [ "$ip_type" = "v4" ]; then
+        ipv4_floating_count=$((ipv4_floating_count + 1))
+        if [ -n "$instance_id" ] && [ "$instance_id" != "null" ] && [ "$instance_id" != '""' ]; then
+          ipv4_attached_count=$((ipv4_attached_count + 1))
+        fi
+      elif [ "$ip_type" = "v6" ]; then
+        ipv6_floating_count=$((ipv6_floating_count + 1))
+        if [ -n "$instance_id" ] && [ "$instance_id" != "null" ] && [ "$instance_id" != '""' ]; then
+          ipv6_attached_count=$((ipv6_attached_count + 1))
+        fi
+      fi
+    fi
+  done < <(echo "$reserved_ips_response" | grep -o '{[^}]*}')
+  
+  # Determine the current stage based on what we found
+  if [ $ipv4_count -gt 0 ] || [ $ipv6_count -gt 0 ]; then
+    stage=$STAGE_SERVERS_CREATED
+  fi
+  
+  if [ $ipv4_floating_count -gt 0 ] || [ $ipv6_floating_count -gt 0 ]; then
+    stage=$STAGE_IPS_CREATED
+  fi
+  
+  if [ $ipv4_attached_count -gt 0 ] || [ $ipv6_attached_count -gt 0 ]; then
+    stage=$STAGE_IPS_ATTACHED
+  fi
+  
+  # We can't easily detect if configs are generated or deployed, so we'll stop here
+  # More advanced detection would require checking the actual servers
+  
+  log "Detected deployment stage: $stage" "INFO"
+  log "Found $ipv4_count IPv4 instances and $ipv6_count IPv6 instance" "INFO"
+  log "Found $ipv4_floating_count IPv4 floating IPs ($ipv4_attached_count attached)" "INFO"
+  log "Found $ipv6_floating_count IPv6 floating IPs ($ipv6_attached_count attached)" "INFO"
+  
+  return $stage
+}
+
+# Check if resources match expected configuration
+verify_resources() {
+  local expected_stage=$1
+  
+  log "Verifying existing resources match expected configuration..." "INFO"
+  
+  # Verification logic based on expected stage
+  case $expected_stage in
+    $STAGE_SERVERS_CREATED)
+      # Verify servers exist and match configuration
+      if [ "$IP_STACK_MODE" = "dual" ] || [ "$IP_STACK_MODE" = "ipv4" ]; then
+        if [ "${#IPV4_INSTANCES[@]}" -lt 3 ]; then
+          log "Expected 3 IPv4 instances, but found ${#IPV4_INSTANCES[@]}" "WARN"
+          return 1
+        fi
+      fi
+      
+      if [ "$IP_STACK_MODE" = "dual" ] || [ "$IP_STACK_MODE" = "ipv6" ]; then
+        if [ -z "$IPV6_INSTANCE" ]; then
+          log "Expected IPv6 instance, but found none" "WARN"
+          return 1
+        fi
+      fi
+      ;;
+      
+    $STAGE_IPS_CREATED|$STAGE_IPS_ATTACHED)
+      # Verify floating IPs exist
+      if [ "$IP_STACK_MODE" = "dual" ] || [ "$IP_STACK_MODE" = "ipv4" ]; then
+        if [ "${#FLOATING_IPV4_IDS[@]}" -lt 3 ]; then
+          log "Expected 3 floating IPv4 IPs, but found ${#FLOATING_IPV4_IDS[@]}" "WARN"
+          return 1
+        fi
+      fi
+      
+      if [ "$IP_STACK_MODE" = "dual" ] || [ "$IP_STACK_MODE" = "ipv6" ]; then
+        if [ -z "$FLOATING_IPV6_ID" ]; then
+          log "Expected floating IPv6 IP, but found none" "WARN"
+          return 1
+        fi
+      fi
+      ;;
+  esac
+  
+  log "Resource verification passed" "INFO"
+  return 0
+}
+
 # Interactive setup function for .env configuration
 setup_env() {
   if [ -f ".env" ]; then
@@ -2737,6 +3000,22 @@ cleanup_reserved_ips() {
 
 # Main deployment function
 deploy() {
+  local resume_mode=false
+  
+  # Reset arrays to store resource information
+  IPV4_INSTANCES=()
+  IPV4_ADDRESSES=()
+  IPV6_INSTANCE=""
+  IPV6_ADDRESS=""
+  FLOATING_IPV4_IDS=()
+  FLOATING_IPV6_ID=""
+  
+  # Check if we should try to resume a previous deployment
+  if [ "$1" = "resume" ]; then
+    resume_mode=true
+    log "Starting deployment in RESUME mode - will attempt to continue from previous state" "INFO"
+  fi
+  
   # Enable verbose debugging to see exactly what's happening
   set -x
   
@@ -2745,6 +3024,39 @@ deploy() {
   trap 'echo "Error detected, cleaning up resources..."; set +x; cleanup_resources; exit 1' ERR
   
   echo "Starting Vultr BGP Anycast deployment..."
+  
+  # Detect current deployment state
+  local current_stage=$STAGE_INIT
+  
+  if [ "$resume_mode" = true ]; then
+    # First try to load state from file
+    load_deployment_state
+    current_stage=$?
+    
+    # If no state file found, try to detect state from existing resources
+    if [ $current_stage -eq $STAGE_INIT ]; then
+      detect_deployment_stage
+      current_stage=$?
+    fi
+    
+    # Only continue if we found something to resume
+    if [ $current_stage -gt $STAGE_INIT ]; then
+      log "Resuming deployment from stage $current_stage" "INFO"
+      
+      # Verify resources match expected configuration
+      if ! verify_resources $current_stage; then
+        log "Resource verification failed - resources may be damaged or incomplete" "WARN"
+        read -p "Continue anyway? This may cause errors (y/n): " continue_anyway
+        if [[ ! $continue_anyway =~ ^[Yy]$ ]]; then
+          log "Deployment aborted by user" "INFO"
+          return 1
+        fi
+      fi
+    else
+      log "No previous deployment state found - starting from beginning" "INFO"
+      resume_mode=false
+    fi
+  fi
   
   # Clean up unused reserved IPs if enabled
   if [ "$CLEANUP_RESERVED_IPS" = "true" ]; then
@@ -2775,232 +3087,124 @@ deploy() {
     fi
   fi
   
-  # Check if existing VM is shut down
-  check_existing_vm || exit 1
-  
-  # Check for potentially incomplete previous deployment
-  log "Checking for existing BGP Anycast resources from a previous deployment..." "INFO"
-  
-  # Check for existing instances with our naming pattern
-  existing_instances_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances" \
-    -H "Authorization: Bearer ${VULTR_API_KEY}")
-  
-  # Build instance patterns dynamically from region variables
-  # This ensures we find instances in the configured regions, not hardcoded ones
-  instance_patterns=()
-  instance_patterns+=("${IPV4_REGION_PRIMARY}-ipv4-bgp-primary")
-  instance_patterns+=("${IPV4_REGION_SECONDARY}-ipv4-bgp-secondary")
-  instance_patterns+=("${IPV4_REGION_TERTIARY}-ipv4-bgp-tertiary")
-  instance_patterns+=("${IPV6_REGION}-ipv6-bgp")
-  existing_instances=()
-  existing_instance_details=""
-  
-  for pattern in "${instance_patterns[@]}"; do
-    if echo "$existing_instances_response" | grep -q "\"label\":\"$pattern"; then
-      id=$(echo "$existing_instances_response" | grep -o "\"id\":\"[^\"]*\",\"os\":\"[^\"]*\",\"ram\":[^,]*,\"disk\":[^,]*,\"main_ip\":\"[^\"]*\",\"vcpu_count\":[^,]*,\"region\":\"[^\"]*\",\"plan\":\"[^\"]*\",\"date_created\":\"[^\"]*\",\"status\":\"[^\"]*\",\"allowed_bandwidth\":[^,]*,\"netmask_v4\":\"[^\"]*\",\"gateway_v4\":\"[^\"]*\",\"power_status\":\"[^\"]*\",\"server_status\":\"[^\"]*\",\"v6_network\":\"[^\"]*\",\"v6_main_ip\":\"[^\"]*\",\"v6_network_size\":[^,]*,\"label\":\"$pattern[^\"]*\"" | head -1)
-      server_id=$(echo "$id" | grep -o "\"id\":\"[^\"]*\"" | cut -d'"' -f4)
-      main_ip=$(echo "$id" | grep -o "\"main_ip\":\"[^\"]*\"" | cut -d'"' -f4)
-      region=$(echo "$id" | grep -o "\"region\":\"[^\"]*\"" | cut -d'"' -f4)
-      label=$(echo "$id" | grep -o "\"label\":\"[^\"]*\"" | cut -d'"' -f4)
-      status=$(echo "$id" | grep -o "\"status\":\"[^\"]*\"" | cut -d'"' -f4)
+  # Only run these checks if we're not in resume mode
+  if [ "$resume_mode" = false ]; then
+    # Check if existing VM is shut down
+    check_existing_vm || exit 1
+    
+    # Check for potentially incomplete previous deployment
+    log "Checking for existing BGP Anycast resources from a previous deployment..." "INFO"
+    
+    # Detect current deployment state
+    detect_deployment_stage
+    local detected_stage=$?
+    
+    if [ $detected_stage -gt $STAGE_INIT ]; then
+      log "Found existing resources from a previous deployment (Stage: $detected_stage)" "INFO"
       
-      existing_instances+=("$server_id")
-      existing_instance_details+="  • $label ($region): $main_ip (Status: $status, ID: $server_id)\n"
-    fi
-  done
-  
-  # Also check for reserved IPs
-  reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
-    -H "Authorization: Bearer ${VULTR_API_KEY}")
-  
-  total_ip_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
-  existing_reserved_details=""
-  
-  if [ "$total_ip_count" -gt 0 ]; then
-    echo "$reserved_ips_response" | grep -o '"id":"[^"]*","region":"[^"]*","ip_type":"[^"]*","subnet":"[^"]*","subnet_size":[^,]*,"label":"[^"]*"' | \
-    while read -r line; do
-      id=$(echo "$line" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-      region=$(echo "$line" | grep -o '"region":"[^"]*' | cut -d'"' -f4)
-      ip_type=$(echo "$line" | grep -o '"ip_type":"[^"]*' | cut -d'"' -f4)
-      subnet=$(echo "$line" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
-      label=$(echo "$line" | grep -o '"label":"[^"]*' | cut -d'"' -f4)
-      
-      existing_reserved_details+="  • ${ip_type}: $subnet (${region}) - $label\n"
-    done
-  fi
-  
-  # If we found existing resources, ask user what to do
-  if [ ${#existing_instances[@]} -gt 0 ] || [ "$total_ip_count" -gt 0 ]; then
-    log "Found existing BGP Anycast resources that appear to be from a previous deployment:" "WARN"
-    echo ""
-    
-    if [ ${#existing_instances[@]} -gt 0 ]; then
-      echo "EXISTING INSTANCES:"
-      echo -e "$existing_instance_details"
-      echo ""
-    fi
-    
-    if [ "$total_ip_count" -gt 0 ]; then
-      echo "EXISTING RESERVED IPs:"
-      echo -e "$existing_reserved_details"
-      echo ""
-    fi
-    
-    echo "Options:"
-    echo "1) Clean up all existing resources and start fresh"
-    echo "2) Continue deployment using existing resources where possible"
-    echo "3) Cancel deployment"
-    echo ""
-    
-    read -p "What would you like to do? (1-3): " recovery_choice
-    
-    case "$recovery_choice" in
-      1)
-        log "Cleaning up all existing resources before starting fresh deployment..." "INFO"
+      # Get details to display to the user
+      current_resources=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}")
         
-        # Clean up instances
-        for instance_id in "${existing_instances[@]}"; do
-          log "Deleting instance with ID: $instance_id" "INFO"
-          delete_response=$(curl -s -X DELETE "${VULTR_API_ENDPOINT}instances/$instance_id" \
-            -H "Authorization: Bearer ${VULTR_API_KEY}")
+      reserved_ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}")
+      
+      # Display existing resources
+      echo ""
+      echo "EXISTING DEPLOYMENT RESOURCES:"
+      
+      # Display VM instances
+      echo "Servers:"
+      for pattern in "${IPV4_REGION_PRIMARY}-ipv4-bgp-primary" "${IPV4_REGION_SECONDARY}-ipv4-bgp-secondary" "${IPV4_REGION_TERTIARY}-ipv4-bgp-tertiary" "${IPV6_REGION}-ipv6-bgp"; do
+        if echo "$current_resources" | grep -q "\"label\":\"$pattern"; then
+          instance_info=$(echo "$current_resources" | grep -o "{[^}]*\"label\":\"$pattern[^}]*}" | head -1)
+          instance_id=$(echo "$instance_info" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+          instance_ip=$(echo "$instance_info" | grep -o '"main_ip":"[^"]*"' | cut -d'"' -f4)
+          region=$(echo "$instance_info" | grep -o '"region":"[^"]*"' | cut -d'"' -f4)
+          label=$(echo "$instance_info" | grep -o '"label":"[^"]*"' | cut -d'"' -f4)
+          echo " • $label - $instance_ip ($region)"
+        fi
+      done
+      
+      # Display reserved IPs
+      echo "Reserved IPs:"
+      total_ip_count=$(echo "$reserved_ips" | grep -o '"id":"[^"]*"' | wc -l)
+      
+      if [ "$total_ip_count" -gt 0 ]; then
+        echo "$reserved_ips" | grep -o '"id":"[^"]*","region":"[^"]*","ip_type":"[^"]*","subnet":"[^"]*","subnet_size":[^,]*,"label":"[^"]*"' | \
+        while read -r line; do
+          id=$(echo "$line" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+          region=$(echo "$line" | grep -o '"region":"[^"]*' | cut -d'"' -f4)
+          ip_type=$(echo "$line" | grep -o '"ip_type":"[^"]*' | cut -d'"' -f4)
+          subnet=$(echo "$line" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
+          label=$(echo "$line" | grep -o '"label":"[^"]*' | cut -d'"' -f4)
+          
+          echo " • ${ip_type}: $subnet (${region}) - $label"
         done
-        
-        # Clean up reserved IPs
-        log "Cleaning up all reserved IPs..." "INFO"
-        cleanup_reserved_ips "true"
-        
-        # Wait for deletion to complete
-        log "Waiting 30 seconds for resource deletion to complete..." "INFO"
-        sleep 30
-        ;;
-      2)
-        log "Continuing deployment with existing resources..." "INFO"
-        log "WARNING: This is experimental and may not work correctly." "WARN"
-        log "If you encounter errors, please try again with a clean deployment." "WARN"
-        # We'll continue with deployment and try to use existing resources
-        # (The script will create new resources only where needed)
-        ;;
-      3)
-        log "Deployment cancelled by user." "INFO"
-        exit 0
-        ;;
-      *)
-        log "Invalid choice. Exiting for safety." "ERROR"
-        exit 1
-        ;;
-    esac
-  fi
-  
-  # Automatically check for existing reserved IPs and clean up if needed
-  log "Checking for existing reserved IPs before deployment..." "INFO"
-  reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
-    -H "Authorization: Bearer ${VULTR_API_KEY}")
-  
-  # Build instance patterns dynamically from region variables
-  # This ensures we find instances in the configured regions, not hardcoded ones
-  instance_patterns=()
-  instance_patterns+=("${IPV4_REGION_PRIMARY}-ipv4-bgp-primary")
-  instance_patterns+=("${IPV4_REGION_SECONDARY}-ipv4-bgp-secondary")
-  instance_patterns+=("${IPV4_REGION_TERTIARY}-ipv4-bgp-tertiary")
-  instance_patterns+=("${IPV6_REGION}-ipv6-bgp")
-  existing_instances=()
-  existing_instance_details=""
-  
-  for pattern in "${instance_patterns[@]}"; do
-    if echo "$existing_instances_response" | grep -q "\"label\":\"$pattern"; then
-      id=$(echo "$existing_instances_response" | grep -o "\"id\":\"[^\"]*\",\"os\":\"[^\"]*\",\"ram\":[^,]*,\"disk\":[^,]*,\"main_ip\":\"[^\"]*\",\"vcpu_count\":[^,]*,\"region\":\"[^\"]*\",\"plan\":\"[^\"]*\",\"date_created\":\"[^\"]*\",\"status\":\"[^\"]*\",\"allowed_bandwidth\":[^,]*,\"netmask_v4\":\"[^\"]*\",\"gateway_v4\":\"[^\"]*\",\"power_status\":\"[^\"]*\",\"server_status\":\"[^\"]*\",\"v6_network\":\"[^\"]*\",\"v6_main_ip\":\"[^\"]*\",\"v6_network_size\":[^,]*,\"label\":\"$pattern[^\"]*\"" | head -1)
-      server_id=$(echo "$id" | grep -o "\"id\":\"[^\"]*\"" | cut -d'"' -f4)
-      main_ip=$(echo "$id" | grep -o "\"main_ip\":\"[^\"]*\"" | cut -d'"' -f4)
-      region=$(echo "$id" | grep -o "\"region\":\"[^\"]*\"" | cut -d'"' -f4)
-      label=$(echo "$id" | grep -o "\"label\":\"[^\"]*\"" | cut -d'"' -f4)
-      status=$(echo "$id" | grep -o "\"status\":\"[^\"]*\"" | cut -d'"' -f4)
+      else
+        echo " • None found"
+      fi
       
-      existing_instances+=("$server_id")
-      existing_instance_details+="  • $label ($region): $main_ip (Status: $status, ID: $server_id)"$'\n'
-    fi
-  done
-  
-  # Also check for reserved IPs
-  reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
-    -H "Authorization: Bearer ${VULTR_API_KEY}")
-  
-  total_ip_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
-  existing_reserved_details=""
-  
-  if [ "$total_ip_count" -gt 0 ]; then
-    echo "$reserved_ips_response" | grep -o '"id":"[^"]*","region":"[^"]*","ip_type":"[^"]*","subnet":"[^"]*","subnet_size":[^,]*,"label":"[^"]*"' | \
-    while read -r line; do
-      id=$(echo "$line" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-      region=$(echo "$line" | grep -o '"region":"[^"]*' | cut -d'"' -f4)
-      ip_type=$(echo "$line" | grep -o '"ip_type":"[^"]*' | cut -d'"' -f4)
-      subnet=$(echo "$line" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
-      label=$(echo "$line" | grep -o '"label":"[^"]*' | cut -d'"' -f4)
+      # Stage description
+      echo ""
+      echo "DEPLOYMENT STAGE:"
+      case $detected_stage in
+        $STAGE_SERVERS_CREATED)
+          echo "Servers have been created, but floating IPs have not been created yet."
+          ;;
+        $STAGE_IPS_CREATED)
+          echo "Servers and floating IPs have been created, but IPs are not attached to servers."
+          ;;
+        $STAGE_IPS_ATTACHED)
+          echo "Servers and floating IPs are created and attached, but BIRD configuration is not deployed."
+          ;;
+        $STAGE_BIRD_CONFIGS|$STAGE_CONFIGS_DEPLOYED|$STAGE_COMPLETE)
+          echo "Deployment appears to be in an advanced stage with BIRD configuration."
+          ;;
+      esac
       
-      existing_reserved_details+="  • ${ip_type}: $subnet (${region}) - $label"$'\n'
-    done
+      echo ""
+      echo "OPTIONS:"
+      echo "1) Clean up all existing resources and start fresh"
+      echo "2) Try to resume from previous deployment state"
+      echo "3) Cancel deployment"
+      echo ""
+      
+      read -p "What would you like to do? (1-3): " recovery_choice
+      
+      case "$recovery_choice" in
+        1)
+          log "Cleaning up all existing resources before starting fresh deployment..." "INFO"
+          cleanup_resources
+          
+          # Wait for deletion to complete
+          log "Waiting 30 seconds for resource deletion to complete..." "INFO"
+          sleep 30
+          ;;
+        2)
+          log "Attempting to resume from previous state..." "INFO"
+          
+          # Save detected state in a file for resumption
+          save_deployment_state $detected_stage "Detected state from existing resources"
+          
+          # Exit and call the script again with resume flag
+          exit 0  # Exit current function execution
+          $0 deploy resume  # Call script again with resume flag
+          return $?  # Return the result of the resumed deployment
+          ;;
+        3)
+          log "Deployment cancelled by user." "INFO"
+          exit 0
+          ;;
+        *)
+          log "Invalid choice. Exiting for safety." "ERROR"
+          exit 1
+          ;;
+      esac
+    fi
   fi
   
-  # If we found existing resources, ask user what to do
-  if [ ${#existing_instances[@]} -gt 0 ] || [ "$total_ip_count" -gt 0 ]; then
-    log "Found existing BGP Anycast resources that appear to be from a previous deployment:" "WARN"
-    echo ""
-    
-    if [ ${#existing_instances[@]} -gt 0 ]; then
-      echo "EXISTING INSTANCES:"
-      echo -e "$existing_instance_details"
-      echo ""
-    fi
-    
-    if [ "$total_ip_count" -gt 0 ]; then
-      echo "EXISTING RESERVED IPs:"
-      echo -e "$existing_reserved_details"
-      echo ""
-    fi
-    
-    echo "Options:"
-    echo "1) Clean up all existing resources and start fresh"
-    echo "2) Continue deployment using existing resources where possible"
-    echo "3) Cancel deployment"
-    echo ""
-    
-    read -p "What would you like to do? (1-3): " recovery_choice
-    
-    case "$recovery_choice" in
-      1)
-        log "Cleaning up all existing resources before starting fresh deployment..." "INFO"
-        
-        # Clean up instances
-        for instance_id in "${existing_instances[@]}"; do
-          log "Deleting instance with ID: $instance_id" "INFO"
-          delete_response=$(curl -s -X DELETE "${VULTR_API_ENDPOINT}instances/$instance_id" \
-            -H "Authorization: Bearer ${VULTR_API_KEY}")
-        done
-        
-        # Clean up reserved IPs
-        log "Cleaning up all reserved IPs..." "INFO"
-        cleanup_reserved_ips "true"
-        
-        # Wait for deletion to complete
-        log "Waiting 30 seconds for resource deletion to complete..." "INFO"
-        sleep 30
-        ;;
-      2)
-        log "Continuing deployment with existing resources..." "INFO"
-        log "WARNING: This is experimental and may not work correctly." "WARN"
-        log "If you encounter errors, please try again with a clean deployment." "WARN"
-        # We'll continue with deployment and try to use existing resources
-        # (The script will create new resources only where needed)
-        ;;
-      3)
-        log "Deployment cancelled by user." "INFO"
-        exit 0
-        ;;
-      *)
-        log "Invalid choice. Exiting for safety." "ERROR"
-        exit 1
-        ;;
-    esac
-  fi
+  # Done with preliminary checks, starting deployment
   
   total_ip_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
   existing_reserved_details=""
@@ -3112,6 +3316,9 @@ deploy() {
     log "No existing reserved IPs found - good to proceed" "INFO"
   fi
   
+  # Save initial checkpoint
+  save_deployment_state $STAGE_INIT "Deployment started - Initial state"
+  
   # Deploy according to selected IP stack mode
   case "${IP_STACK_MODE:-dual}" in
     ipv4)
@@ -3122,15 +3329,27 @@ deploy() {
       create_instance "${IPV4_REGIONS[1]}" "mia-ipv4-bgp-secondary-1c1g" "2" "false" || { echo "Failed to create secondary instance"; exit 1; }
       create_instance "${IPV4_REGIONS[2]}" "ord-ipv4-bgp-tertiary-1c1g" "3" "false" || { echo "Failed to create tertiary instance"; exit 1; }
       
+      # Save checkpoint after instances are created
+      save_deployment_state $STAGE_SERVERS_CREATED "IPv4 instances created successfully"
+      
       # Create floating IPs for IPv4 instances
       create_floating_ip "$(cat ewr-ipv4-bgp-primary-1c1g_id.txt)" "${IPV4_REGIONS[0]}" "ipv4" || { echo "Failed to create floating IP for primary instance"; exit 1; }
       create_floating_ip "$(cat mia-ipv4-bgp-secondary-1c1g_id.txt)" "${IPV4_REGIONS[1]}" "ipv4" || { echo "Failed to create floating IP for secondary instance"; exit 1; }
       create_floating_ip "$(cat ord-ipv4-bgp-tertiary-1c1g_id.txt)" "${IPV4_REGIONS[2]}" "ipv4" || { echo "Failed to create floating IP for tertiary instance"; exit 1; }
       
+      # Save checkpoint after floating IPs are created
+      save_deployment_state $STAGE_IPS_CREATED "IPv4 floating IPs created successfully"
+      
+      # At this point the IPs should be automatically attached to the instances
+      save_deployment_state $STAGE_IPS_ATTACHED "IPv4 floating IPs attached to instances"
+      
       # Generate BIRD configurations
       generate_ipv4_bird_config "ewr-ipv4-primary" "$(cat ewr-ipv4-bgp-primary-1c1g_ipv4.txt)" 0
       generate_ipv4_bird_config "mia-ipv4-secondary" "$(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt)" 1
       generate_ipv4_bird_config "ord-ipv4-tertiary" "$(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt)" 2
+      
+      # Save checkpoint after BIRD configs are generated
+      save_deployment_state $STAGE_BIRD_CONFIGS "IPv4 BIRD configurations generated"
       ;;
       
     ipv6)
@@ -3139,11 +3358,23 @@ deploy() {
       # Create IPv6 instance
       create_instance "${IPV6_REGION}" "lax-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
       
+      # Save checkpoint after instance is created
+      save_deployment_state $STAGE_SERVERS_CREATED "IPv6 instance created successfully"
+      
       # Create floating IP for IPv6 instance
       create_floating_ip "$(cat lax-ipv6-bgp-1c1g_id.txt)" "${IPV6_REGION}" "ipv6" || { echo "Failed to create floating IP for IPv6 instance"; exit 1; }
       
+      # Save checkpoint after floating IP is created
+      save_deployment_state $STAGE_IPS_CREATED "IPv6 floating IP created successfully"
+      
+      # At this point the IP should be automatically attached to the instance
+      save_deployment_state $STAGE_IPS_ATTACHED "IPv6 floating IP attached to instance"
+      
       # Generate BIRD configuration
       generate_ipv6_bird_config "lax-ipv6" "$(cat lax-ipv6-bgp-1c1g_ipv4.txt)" "$(cat lax-ipv6-bgp-1c1g_ipv6.txt)"
+      
+      # Save checkpoint after BIRD config is generated
+      save_deployment_state $STAGE_BIRD_CONFIGS "IPv6 BIRD configuration generated"
       ;;
       
     dual|*)
@@ -3157,17 +3388,29 @@ deploy() {
       # Create IPv6 instance (1 server as per documentation)
       create_instance "${IPV6_REGION}" "lax-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
       
+      # Save checkpoint after instances are created
+      save_deployment_state $STAGE_SERVERS_CREATED "All instances created successfully"
+      
       # Create floating IPs for each instance
       create_floating_ip "$(cat ewr-ipv4-bgp-primary-1c1g_id.txt)" "${IPV4_REGIONS[0]}" "ipv4" || { echo "Failed to create floating IP for primary instance"; exit 1; }
       create_floating_ip "$(cat mia-ipv4-bgp-secondary-1c1g_id.txt)" "${IPV4_REGIONS[1]}" "ipv4" || { echo "Failed to create floating IP for secondary instance"; exit 1; }
       create_floating_ip "$(cat ord-ipv4-bgp-tertiary-1c1g_id.txt)" "${IPV4_REGIONS[2]}" "ipv4" || { echo "Failed to create floating IP for tertiary instance"; exit 1; }
       create_floating_ip "$(cat lax-ipv6-bgp-1c1g_id.txt)" "${IPV6_REGION}" "ipv6" || { echo "Failed to create floating IP for IPv6 instance"; exit 1; }
       
+      # Save checkpoint after floating IPs are created
+      save_deployment_state $STAGE_IPS_CREATED "All floating IPs created successfully"
+      
+      # At this point the IPs should be automatically attached to the instances
+      save_deployment_state $STAGE_IPS_ATTACHED "All floating IPs attached to instances"
+      
       # Generate BIRD configurations
       generate_ipv4_bird_config "ewr-ipv4-primary" "$(cat ewr-ipv4-bgp-primary-1c1g_ipv4.txt)" 0
       generate_ipv4_bird_config "mia-ipv4-secondary" "$(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt)" 1
       generate_ipv4_bird_config "ord-ipv4-tertiary" "$(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt)" 2
       generate_ipv6_bird_config "lax-ipv6" "$(cat lax-ipv6-bgp-1c1g_ipv4.txt)" "$(cat lax-ipv6-bgp-1c1g_ipv6.txt)"
+      
+      # Save checkpoint after BIRD configs are generated
+      save_deployment_state $STAGE_BIRD_CONFIGS "All BIRD configurations generated"
       ;;
   esac
   
@@ -3288,6 +3531,12 @@ deploy() {
   deploy_ipv4_bird_config "mia-ipv4-secondary" "$(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt)" "$(cat floating_ipv4_${IPV4_REGIONS[1]}.txt)"
   deploy_ipv4_bird_config "ord-ipv4-tertiary" "$(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt)" "$(cat floating_ipv4_${IPV4_REGIONS[2]}.txt)"
   deploy_ipv6_bird_config "lax-ipv6" "$(cat lax-ipv6-bgp-1c1g_ipv4.txt)" "$(cat floating_ipv6_${IPV6_REGION}.txt)"
+  
+  # Save checkpoint after BIRD configs are deployed
+  save_deployment_state $STAGE_CONFIGS_DEPLOYED "All BIRD configurations deployed to servers"
+  
+  # Save final checkpoint indicating deployment is complete
+  save_deployment_state $STAGE_COMPLETE "Deployment completed successfully"
   
   echo "Deployment complete!"
   echo ""
@@ -3604,6 +3853,10 @@ cleanup_temp_files() {
     # Remove any other temporary files that might cause issues
     find . -name "*_old_id.txt" -type f -delete
     
+    # Note: We deliberately do not delete the deployment state file ($DEPLOYMENT_STATE_FILE)
+    # here as it may be needed for resuming a deployment later. It should be deleted 
+    # explicitly when doing a full cleanup.
+    
     log "Temporary files cleanup complete" "INFO"
   else
     log "Dry run mode: Files would be deleted, but no action taken" "INFO"
@@ -3677,6 +3930,12 @@ cleanup_resources() {
   
   # Also clean up any remaining temp files
   cleanup_temp_files
+  
+  # Remove the deployment state file
+  if [ -f "$DEPLOYMENT_STATE_FILE" ]; then
+    rm -f "$DEPLOYMENT_STATE_FILE"
+    log "Deployment state file deleted" "INFO"
+  fi
   
   echo "Cleanup completed."
   echo "You may want to verify in the Vultr control panel that all resources were properly deleted."
@@ -4317,17 +4576,19 @@ case "$1" in
     fi
     ;;
   *)
-    echo "Usage: $0 {setup|deploy|monitor|test-failover|test-ssh|rtbh|aspa|community|list-regions|list-all-resources|cleanup-all-resources|cleanup-old-vm|cleanup-reserved-ips|list-reserved-ips|force-delete-ip|cleanup|cleanup-temp-files}"
+    echo "Usage: $0 {setup|deploy|deploy resume|monitor|test-failover|test-ssh|rtbh|aspa|community|list-regions|list-all-resources|cleanup-all-resources|cleanup-old-vm|cleanup-reserved-ips|list-reserved-ips|force-delete-ip|cleanup|cleanup-temp-files}"
     echo "       $0 test-ssh <hostname_or_ip> [username]"
     echo "       $0 rtbh <server_ip> <target_ip>"
     echo "       $0 aspa <server_ip>"
     echo "       $0 community <server_ip> <community_type> [target_as]"
     echo ""
     echo "Commands:"
-    echo "  setup               - Set up or reconfigure .env file interactively"
-    echo "  deploy              - Deploy the BGP Anycast infrastructure"
-    echo "  monitor             - Monitor the status of the BGP Anycast infrastructure"
-    echo "  test-failover       - Test failover by stopping BIRD on the primary server"
+    echo "  setup               - Configure environment variables for deployment"
+    echo "  deploy              - Deploy BGP Anycast infrastructure"
+    echo "  deploy resume       - Resume a previous deployment from where it left off"
+    echo "  monitor             - Check status of deployed infrastructure"
+    echo "  test-failover       - Test BGP failover by stopping BIRD on primary server"
+    echo "  cleanup             - Clean up all resources"
     echo "  test-ssh            - Test SSH connectivity to a server"
     echo "  rtbh                - Configure Remote Triggered Black Hole for DDoS mitigation"
     echo "  aspa                - Configure ASPA validation for enhanced security"
