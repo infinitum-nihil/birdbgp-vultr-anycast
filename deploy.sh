@@ -249,26 +249,47 @@ detect_deployment_stage() {
   local reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
     -H "Authorization: Bearer ${VULTR_API_KEY}")
   
-  # Count IPv4 floating IPs
-  while read -r ip_obj; do
-    if [ -n "$ip_obj" ]; then
-      local ip_type=$(echo "$ip_obj" | grep -o '"ip_type":"[^"]*' | cut -d'"' -f4)
-      local region=$(echo "$ip_obj" | grep -o '"region":"[^"]*' | cut -d'"' -f4)
-      local instance_id=$(echo "$ip_obj" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4 2>/dev/null || echo "")
+  # Parse reserved IPs with a safer method
+  if [[ "$reserved_ips_response" == *"reserved_ips"* ]]; then
+    # Check if there are any reserved IPs in the response
+    if [[ "$reserved_ips_response" == *"id"* ]]; then
+      # First check how many IPs are in the response
+      ipv4_floating_count=0
+      ipv6_floating_count=0
+      ipv4_attached_count=0
+      ipv6_attached_count=0
       
-      if [ "$ip_type" = "v4" ]; then
-        ipv4_floating_count=$((ipv4_floating_count + 1))
-        if [ -n "$instance_id" ] && [ "$instance_id" != "null" ] && [ "$instance_id" != '""' ]; then
-          ipv4_attached_count=$((ipv4_attached_count + 1))
+      # Process line by line to find IPs
+      while IFS= read -r line; do
+        if [[ "$line" == *"ip_type"* ]]; then
+          # Parse the IP type
+          if [[ "$line" == *"\"ip_type\":\"v4\""* ]]; then
+            ipv4_floating_count=$((ipv4_floating_count + 1))
+            
+            # Check if this IP is attached by looking at nearby lines for instance_id
+            for i in {1..5}; do
+              next_line=$(echo "$reserved_ips_response" | grep -A $i "$line" | tail -1)
+              if [[ "$next_line" == *"instance_id"* && "$next_line" != *"instance_id\":null"* && "$next_line" != *"instance_id\":\"\""* ]]; then
+                ipv4_attached_count=$((ipv4_attached_count + 1))
+                break
+              fi
+            done
+          elif [[ "$line" == *"\"ip_type\":\"v6\""* ]]; then
+            ipv6_floating_count=$((ipv6_floating_count + 1))
+            
+            # Check if this IP is attached by looking at nearby lines for instance_id
+            for i in {1..5}; do
+              next_line=$(echo "$reserved_ips_response" | grep -A $i "$line" | tail -1)
+              if [[ "$next_line" == *"instance_id"* && "$next_line" != *"instance_id\":null"* && "$next_line" != *"instance_id\":\"\""* ]]; then
+                ipv6_attached_count=$((ipv6_attached_count + 1))
+                break
+              fi
+            done
+          fi
         fi
-      elif [ "$ip_type" = "v6" ]; then
-        ipv6_floating_count=$((ipv6_floating_count + 1))
-        if [ -n "$instance_id" ] && [ "$instance_id" != "null" ] && [ "$instance_id" != '""' ]; then
-          ipv6_attached_count=$((ipv6_attached_count + 1))
-        fi
-      fi
+      done < <(echo "$reserved_ips_response")
     fi
-  done < <(echo "$reserved_ips_response" | grep -o '{[^}]*}')
+  fi
   
   # Determine the current stage based on what we found
   if [ $ipv4_count -gt 0 ] || [ $ipv6_count -gt 0 ]; then
