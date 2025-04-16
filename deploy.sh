@@ -465,6 +465,10 @@ setup_env() {
   # SSH key path
   read -p "Enter the absolute path to your SSH private key: " ssh_key_path
   
+  # Domain name for VM FQDNs
+  read -p "Enter domain name for VM hostnames (e.g., example.com): " domain_name
+  domain_name=${domain_name:-"bgp.example.net"}
+  
   # Deployment options
   read -p "Deploy with cloud-init? (y/n, default: y): " use_cloud_init
   use_cloud_init=${use_cloud_init:-y}
@@ -513,6 +517,9 @@ VULTR_BGP_PASSWORD=${bgp_password}
 # SSH key configuration
 SSH_KEY_PATH=${ssh_key_path}
 
+# Domain name for VM hostnames (example.com)
+DOMAIN_NAME=${domain_name}
+
 # Deployment options
 USE_CLOUD_INIT=${use_cloud_init_value}
 CLEANUP_RESERVED_IPS=${cleanup_ips_value}
@@ -529,6 +536,7 @@ EOF
   export OUR_IPV6_BGP_RANGE=${ipv6_range}
   export VULTR_BGP_PASSWORD=${bgp_password}
   export SSH_KEY_PATH=${ssh_key_path}
+  export DOMAIN_NAME=${domain_name}
   export USE_CLOUD_INIT=${use_cloud_init_value}
   export CLEANUP_RESERVED_IPS=${cleanup_ips_value}
   export IP_STACK_MODE=${ip_stack_mode}
@@ -613,8 +621,9 @@ OS_ID=1743 # Ubuntu 22.04 LTS x64
 # OS_ID=387  # Ubuntu 20.04 LTS x64
 # OS_ID=270  # Ubuntu 18.04 LTS x64
 
-# Load cloud-init setting from .env with default to "true"
+# Load settings from .env with defaults
 USE_CLOUD_INIT=${USE_CLOUD_INIT:-true}
+DOMAIN_NAME=${DOMAIN_NAME:-"bgp.example.net"}
 
 # Function to generate cloud-init configuration
 # Note: We explicitly create the bird and crowdsec users in the users section to ensure they exist 
@@ -634,7 +643,7 @@ generate_cloud_init_config() {
     cat << CLOUDINIT | base64 -w 0
 #cloud-config
 hostname: $hostname
-fqdn: $hostname.bgp.local
+fqdn: $hostname.$DOMAIN_NAME
 preserve_hostname: false
 package_update: true
 package_upgrade: true
@@ -820,7 +829,7 @@ CLOUDINIT
     cat << CLOUDINIT6 | base64 -w 0
 #cloud-config
 hostname: $hostname
-fqdn: $hostname.bgp.local
+fqdn: $hostname.$DOMAIN_NAME
 preserve_hostname: false
 package_update: true
 package_upgrade: true
