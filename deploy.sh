@@ -4356,21 +4356,30 @@ case "$1" in
     reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
       -H "Authorization: Bearer ${VULTR_API_KEY}")
     
-    total_ip_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
-    
-    if [ "$total_ip_count" -gt 0 ]; then
-      echo "$reserved_ips_response" | grep -o '"id":"[^"]*","region":"[^"]*","ip_type":"[^"]*","subnet":"[^"]*","subnet_size":[^,]*,"label":"[^"]*"' | \
-      while read -r line; do
-        id=$(echo "$line" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-        region=$(echo "$line" | grep -o '"region":"[^"]*' | cut -d'"' -f4)
-        ip_type=$(echo "$line" | grep -o '"ip_type":"[^"]*' | cut -d'"' -f4)
-        subnet=$(echo "$line" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
-        label=$(echo "$line" | grep -o '"label":"[^"]*' | cut -d'"' -f4)
-        
-        echo "  • ${ip_type}: $subnet (${region}) - $label (ID: $id)"
-      done
+    # Check if the response contains reserved-ips data
+    if echo "$reserved_ips_response" | grep -q '"reserved_ips"'; then
+      # Extract the count more safely
+      total_ip_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
+      
+      if [ "$total_ip_count" -gt 0 ]; then
+        # Process each reserved IP more carefully
+        echo "$reserved_ips_response" | grep -o '{[^}]*"id":"[^"]*"[^}]*}' | while read -r ip_obj; do
+          # Extract fields individually with safer methods
+          id=$(echo "$ip_obj" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 || echo "Unknown")
+          region=$(echo "$ip_obj" | grep -o '"region":"[^"]*"' | cut -d'"' -f4 || echo "Unknown")
+          ip_type=$(echo "$ip_obj" | grep -o '"ip_type":"[^"]*"' | cut -d'"' -f4 || echo "Unknown")
+          subnet=$(echo "$ip_obj" | grep -o '"subnet":"[^"]*"' | cut -d'"' -f4 || echo "Unknown")
+          
+          # Label might be missing in some responses, handle that case
+          label=$(echo "$ip_obj" | grep -o '"label":"[^"]*"' | cut -d'"' -f4 || echo "No Label")
+          
+          echo "  • ${ip_type}: $subnet (${region}) - $label (ID: $id)"
+        done
+      else
+        echo "  None found"
+      fi
     else
-      echo "  None found"
+      echo "  None found (or API response format changed)"
     fi
     
     echo ""
