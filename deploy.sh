@@ -3800,23 +3800,45 @@ deploy() {
 monitor() {
   echo "Monitoring BGP Anycast infrastructure..."
   
-  # Check if instance ID files exist
-  if [ ! -f "ewr-ipv4-bgp-primary-1c1g_id.txt" ] || [ ! -f "mia-ipv4-bgp-secondary-1c1g_id.txt" ] || [ ! -f "ord-ipv4-bgp-tertiary-1c1g_id.txt" ] || [ ! -f "lax-ipv6-bgp-1c1g_id.txt" ]; then
+  # Check if deployment state file exists and check its stage
+  if [ -f "$DEPLOYMENT_STATE_FILE" ]; then
+    DEPLOYMENT_STAGE=$(jq -r '.stage' "$DEPLOYMENT_STATE_FILE" 2>/dev/null || echo "0")
+    
+    if [ "$DEPLOYMENT_STAGE" -lt "3" ]; then
+      echo -e "\n============================================================="
+      echo "WARNING: Incomplete deployment detected (Stage $DEPLOYMENT_STAGE)"
+      echo "Current stages: 1=Servers Created, 2=IPs Allocated, 3=IPs Attached, 4=Complete"
+      echo "The deployment has not finished all required stages for monitoring to work."
+      echo ""
+      echo "To fix this issue, run: ./deploy.sh continue"
+      echo "This will resume the deployment process from the current stage."
+      echo "============================================================="
+      
+      # Exit early if deployment isn't complete
+      exit 1
+    fi
+  fi
+  
+  # Check if instance ID files exist using the configured regions
+  if [ ! -f "${IPV4_REGION_PRIMARY}-ipv4-bgp-primary-1c1g_id.txt" ] || 
+     [ ! -f "${IPV4_REGION_SECONDARY}-ipv4-bgp-secondary-1c1g_id.txt" ] || 
+     [ ! -f "${IPV4_REGION_TERTIARY}-ipv4-bgp-tertiary-1c1g_id.txt" ] || 
+     [ ! -f "${IPV6_REGION}-ipv6-bgp-1c1g_id.txt" ]; then
     echo "Error: Instance ID files not found. Have you deployed the infrastructure?"
     exit 1
   fi
   
-  # Get instance IDs
-  ipv4_primary_id=$(cat ewr-ipv4-bgp-primary-1c1g_id.txt)
-  ipv4_secondary_id=$(cat mia-ipv4-bgp-secondary-1c1g_id.txt)
-  ipv4_tertiary_id=$(cat ord-ipv4-bgp-tertiary-1c1g_id.txt)
-  ipv6_id=$(cat lax-ipv6-bgp-1c1g_id.txt)
+  # Get instance IDs using the configured regions
+  ipv4_primary_id=$(cat ${IPV4_REGION_PRIMARY}-ipv4-bgp-primary-1c1g_id.txt)
+  ipv4_secondary_id=$(cat ${IPV4_REGION_SECONDARY}-ipv4-bgp-secondary-1c1g_id.txt)
+  ipv4_tertiary_id=$(cat ${IPV4_REGION_TERTIARY}-ipv4-bgp-tertiary-1c1g_id.txt)
+  ipv6_id=$(cat ${IPV6_REGION}-ipv6-bgp-1c1g_id.txt)
   
-  # Get instance IPs
-  ipv4_primary_ip=$(cat ewr-ipv4-bgp-primary-1c1g_ipv4.txt)
-  ipv4_secondary_ip=$(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt)
-  ipv4_tertiary_ip=$(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt)
-  ipv6_ip=$(cat lax-ipv6-bgp-1c1g_ipv4.txt)
+  # Get instance IPs using the configured regions
+  ipv4_primary_ip=$(cat ${IPV4_REGION_PRIMARY}-ipv4-bgp-primary-1c1g_ipv4.txt)
+  ipv4_secondary_ip=$(cat ${IPV4_REGION_SECONDARY}-ipv4-bgp-secondary-1c1g_ipv4.txt)
+  ipv4_tertiary_ip=$(cat ${IPV4_REGION_TERTIARY}-ipv4-bgp-tertiary-1c1g_ipv4.txt)
+  ipv6_ip=$(cat ${IPV6_REGION}-ipv6-bgp-1c1g_ipv4.txt)
   
   # Check instance status
   echo "Checking instance status..."
@@ -4546,6 +4568,12 @@ case "$1" in
   deploy)
     deploy
     ;;
+  continue)
+    # Resume deployment from current stage
+    echo "Continuing deployment from current stage..."
+    RESUME_MODE=true
+    deploy
+    ;;
   monitor)
     monitor
     ;;
@@ -5011,7 +5039,7 @@ case "$1" in
     ;;
     
   *)
-    echo "Usage: $0 {setup|deploy|deploy resume|monitor|test-failover|test-ssh|rtbh|aspa|community|list-regions|list-all-resources|cleanup-all-resources|cleanup-old-vm|cleanup-reserved-ips|list-reserved-ips|force-delete-ip|fix-ip-quota|cleanup|cleanup-temp-files|verbose}"
+    echo "Usage: $0 {setup|deploy|continue|monitor|test-failover|test-ssh|rtbh|aspa|community|list-regions|list-all-resources|cleanup-all-resources|cleanup-old-vm|cleanup-reserved-ips|list-reserved-ips|force-delete-ip|fix-ip-quota|cleanup|cleanup-temp-files|verbose}"
     echo "       $0 test-ssh <hostname_or_ip> [username]"
     echo "       $0 rtbh <server_ip> <target_ip>"
     echo "       $0 aspa <server_ip>"
@@ -5021,7 +5049,7 @@ case "$1" in
     echo "Commands:"
     echo "  setup               - Configure environment variables for deployment"
     echo "  deploy              - Deploy BGP Anycast infrastructure"
-    echo "  deploy resume       - Resume a previous deployment from where it left off"
+    echo "  continue            - Continue a previous deployment from where it left off"
     echo "  monitor             - Check status of deployed infrastructure"
     echo "  test-failover       - Test BGP failover by stopping BIRD on primary server"
     echo "  cleanup             - Clean up all resources"
