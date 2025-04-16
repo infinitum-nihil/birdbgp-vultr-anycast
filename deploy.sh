@@ -617,6 +617,8 @@ OS_ID=1743 # Ubuntu 22.04 LTS x64
 USE_CLOUD_INIT=${USE_CLOUD_INIT:-true}
 
 # Function to generate cloud-init configuration
+# Note: We explicitly create the bird and crowdsec users in the users section to ensure they exist 
+# before other cloud-init sections try to create files owned by these users or start services
 generate_cloud_init_config() {
   local ipv6_enabled=$1
   
@@ -632,6 +634,15 @@ generate_cloud_init_config() {
 #cloud-config
 package_update: true
 package_upgrade: true
+
+# Create system users explicitly before package installation
+users:
+  - name: bird
+    system: true
+    shell: /bin/false
+  - name: crowdsec
+    system: true
+    shell: /bin/false
 
 apt:
   sources:
@@ -806,6 +817,15 @@ CLOUDINIT
 #cloud-config
 package_update: true
 package_upgrade: true
+
+# Create system users explicitly before package installation
+users:
+  - name: bird
+    system: true
+    shell: /bin/false
+  - name: crowdsec
+    system: true
+    shell: /bin/false
 
 apt:
   sources:
