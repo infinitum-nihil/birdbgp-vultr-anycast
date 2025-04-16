@@ -621,6 +621,7 @@ USE_CLOUD_INIT=${USE_CLOUD_INIT:-true}
 # before other cloud-init sections try to create files owned by these users or start services
 generate_cloud_init_config() {
   local ipv6_enabled=$1
+  local hostname=$2  # VM name/label will be used as hostname
   
   # If cloud-init is not enabled, return the simple bash script
   if [ "$USE_CLOUD_INIT" != "true" ]; then
@@ -630,8 +631,11 @@ generate_cloud_init_config() {
   
   # IPv4 BGP instance cloud-init
   if [ "$ipv6_enabled" = "false" ]; then
-    cat << 'CLOUDINIT' | base64 -w 0
+    cat << CLOUDINIT | base64 -w 0
 #cloud-config
+hostname: $hostname
+fqdn: $hostname.bgp.local
+preserve_hostname: false
 package_update: true
 package_upgrade: true
 
@@ -813,8 +817,11 @@ runcmd:
 CLOUDINIT
   # IPv6 BGP instance cloud-init
   else
-    cat << 'CLOUDINIT6' | base64 -w 0
+    cat << CLOUDINIT6 | base64 -w 0
 #cloud-config
+hostname: $hostname
+fqdn: $hostname.bgp.local
+preserve_hostname: false
 package_update: true
 package_upgrade: true
 
@@ -1120,7 +1127,7 @@ create_instance() {
         \"os_id\": $OS_ID,
         \"enable_ipv6\": $ipv6_enabled,
         \"tags\": [\"bgp\", \"priority-$priority\"],
-        \"user_data\": \"$(generate_cloud_init_config $ipv6_enabled)\"
+        \"user_data\": \"$(generate_cloud_init_config $ipv6_enabled \"$label\")\"
       }")
   else
     echo "Using SSH key ID: $ssh_key_id for instance deployment"
@@ -1137,7 +1144,7 @@ create_instance() {
         \"enable_ipv6\": $ipv6_enabled,
         \"tags\": [\"bgp\", \"priority-$priority\"],
         \"sshkey_id\": [\"$ssh_key_id\"],
-        \"user_data\": \"$(generate_cloud_init_config $ipv6_enabled)\"
+        \"user_data\": \"$(generate_cloud_init_config $ipv6_enabled \"$label\")\"
       }")
   fi
   
