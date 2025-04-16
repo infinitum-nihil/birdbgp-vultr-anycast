@@ -4357,21 +4357,21 @@ case "$1" in
       -H "Authorization: Bearer ${VULTR_API_KEY}")
     
     # Check if the response contains reserved-ips data
-    if echo "$reserved_ips_response" | grep -q '"reserved_ips"'; then
+    if echo "$reserved_ips_response" | grep -q '"reserved_ips"' 2>/dev/null; then
       # Extract the count more safely
-      total_ip_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
+      total_ip_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' 2>/dev/null | wc -l)
       
       if [ "$total_ip_count" -gt 0 ]; then
         # Process each reserved IP more carefully
-        echo "$reserved_ips_response" | grep -o '{[^}]*"id":"[^"]*"[^}]*}' | while read -r ip_obj; do
+        echo "$reserved_ips_response" | grep -o '{[^}]*"id":"[^"]*"[^}]*}' 2>/dev/null | while read -r ip_obj; do
           # Extract fields individually with safer methods
-          id=$(echo "$ip_obj" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 || echo "Unknown")
-          region=$(echo "$ip_obj" | grep -o '"region":"[^"]*"' | cut -d'"' -f4 || echo "Unknown")
-          ip_type=$(echo "$ip_obj" | grep -o '"ip_type":"[^"]*"' | cut -d'"' -f4 || echo "Unknown")
-          subnet=$(echo "$ip_obj" | grep -o '"subnet":"[^"]*"' | cut -d'"' -f4 || echo "Unknown")
+          id=$(echo "$ip_obj" | grep -o '"id":"[^"]*"' 2>/dev/null | cut -d'"' -f4) || id="Unknown"
+          region=$(echo "$ip_obj" | grep -o '"region":"[^"]*"' 2>/dev/null | cut -d'"' -f4) || region="Unknown"
+          ip_type=$(echo "$ip_obj" | grep -o '"ip_type":"[^"]*"' 2>/dev/null | cut -d'"' -f4) || ip_type="Unknown"
+          subnet=$(echo "$ip_obj" | grep -o '"subnet":"[^"]*"' 2>/dev/null | cut -d'"' -f4) || subnet="Unknown"
           
           # Label might be missing in some responses, handle that case
-          label=$(echo "$ip_obj" | grep -o '"label":"[^"]*"' | cut -d'"' -f4 || echo "No Label")
+          label=$(echo "$ip_obj" | grep -o '"label":"[^"]*"' 2>/dev/null | cut -d'"' -f4) || label="No Label"
           
           echo "  • ${ip_type}: $subnet (${region}) - $label (ID: $id)"
         done
