@@ -3021,7 +3021,7 @@ deploy() {
   
   # Set up error handling
   # If the script exits with an error, run the cleanup function
-  trap 'echo "Error detected, cleaning up resources..."; set +x; cleanup_resources; exit 1' ERR
+  trap 'echo "Error detected, cleaning up resources..."; set +x; cleanup_resources "error"; exit 1' ERR
   
   echo "Starting Vultr BGP Anycast deployment..."
   
@@ -3940,8 +3940,13 @@ cleanup_resources() {
   echo "Cleanup completed."
   echo "You may want to verify in the Vultr control panel that all resources were properly deleted."
   
-  # Return failure code to ensure script exits properly after cleanup
-  return 1
+  # We don't want to return a failure code when this is called directly from cleanup
+  # Only return failure when invoked from error handling
+  if [ "${1:-}" = "error" ]; then
+    return 1
+  else
+    return 0
+  fi
 }
 
 # Function to clean up old birdbgp-losangeles VM
