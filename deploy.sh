@@ -2918,8 +2918,6 @@ deploy() {
       existing_instances+=("$server_id")
       existing_instance_details+="  • $label ($region): $main_ip (Status: $status, ID: $server_id)"$'\n'
     fi
-  done$'\n'
-    fi
   done
   
   # Also check for reserved IPs
