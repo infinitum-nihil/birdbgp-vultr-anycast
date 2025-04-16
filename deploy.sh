@@ -4332,49 +4332,128 @@ case "$1" in
     
     echo ""
     echo "EXISTING INSTANCES:"
-    for pattern in "${instance_patterns[@]}"; do
-      if echo "$existing_instances_response" | grep -q "\"label\":\"$pattern"; then
-        found_instances=true
-        id=$(echo "$existing_instances_response" | grep -o "\"id\":\"[^\"]*\",\"os\":\"[^\"]*\",\"ram\":[^,]*,\"disk\":[^,]*,\"main_ip\":\"[^\"]*\",\"vcpu_count\":[^,]*,\"region\":\"[^\"]*\",\"plan\":\"[^\"]*\",\"date_created\":\"[^\"]*\",\"status\":\"[^\"]*\",\"allowed_bandwidth\":[^,]*,\"netmask_v4\":\"[^\"]*\",\"gateway_v4\":\"[^\"]*\",\"power_status\":\"[^\"]*\",\"server_status\":\"[^\"]*\",\"v6_network\":\"[^\"]*\",\"v6_main_ip\":\"[^\"]*\",\"v6_network_size\":[^,]*,\"label\":\"$pattern[^\"]*\"" | head -1)
-        server_id=$(echo "$id" | grep -o "\"id\":\"[^\"]*\"" | cut -d'"' -f4)
-        main_ip=$(echo "$id" | grep -o "\"main_ip\":\"[^\"]*\"" | cut -d'"' -f4)
-        region=$(echo "$id" | grep -o "\"region\":\"[^\"]*\"" | cut -d'"' -f4)
-        label=$(echo "$id" | grep -o "\"label\":\"[^\"]*\"" | cut -d'"' -f4)
-        status=$(echo "$id" | grep -o "\"status\":\"[^\"]*\"" | cut -d'"' -f4)
-        
-        echo "  • $label ($region): $main_ip (Status: $status, ID: $server_id)"
-      fi
-    done
+    
+    # Safer way to process JSON with simple string checks
+    if [[ "$existing_instances_response" == *"instances"* ]]; then
+      for pattern in "${instance_patterns[@]}"; do
+        if [[ "$existing_instances_response" == *"\"label\":\"$pattern"* ]]; then
+          found_instances=true
+          
+          # Extract key-value pairs individually with simpler patterns that are less likely to fail
+          server_id=""
+          main_ip=""
+          region=""
+          label=""
+          status=""
+          
+          # Look for instances with our pattern
+          # Find each { } block with our label pattern and process it
+          block_start=0
+          while true; do
+            # Find the position of the next instance with our label
+            pos=$(echo "$existing_instances_response" | tail -c +$((block_start+1)) | grep -b -o "\"label\":\"$pattern[^\"]*\"" | head -1 | cut -d':' -f1)
+            
+            # If no more instances found, break
+            if [ -z "$pos" ]; then
+              break
+            fi
+            
+            # Find the full JSON object containing this label
+            # First, find the start of the object before this position
+            start_pos=$((block_start + pos))
+            block_start=$start_pos
+            
+            # Extract useful fields using basic string operations that are reliable
+            if [[ "$existing_instances_response" == *"\"id\":\""* ]]; then
+              server_id=$(echo "$existing_instances_response" | grep -o "\"id\":\"[^\"]*\"" | head -1 | cut -d'"' -f4 || echo "Unknown")
+            fi
+            
+            if [[ "$existing_instances_response" == *"\"main_ip\":\""* ]]; then
+              main_ip=$(echo "$existing_instances_response" | grep -o "\"main_ip\":\"[^\"]*\"" | head -1 | cut -d'"' -f4 || echo "Unknown")
+            fi
+            
+            if [[ "$existing_instances_response" == *"\"region\":\""* ]]; then
+              region=$(echo "$existing_instances_response" | grep -o "\"region\":\"[^\"]*\"" | head -1 | cut -d'"' -f4 || echo "Unknown")
+            fi
+            
+            if [[ "$existing_instances_response" == *"\"label\":\""* ]]; then
+              label=$(echo "$existing_instances_response" | grep -o "\"label\":\"[^\"]*\"" | head -1 | cut -d'"' -f4 || echo "Unknown")
+            fi
+            
+            if [[ "$existing_instances_response" == *"\"status\":\""* ]]; then
+              status=$(echo "$existing_instances_response" | grep -o "\"status\":\"[^\"]*\"" | head -1 | cut -d'"' -f4 || echo "Unknown")
+            fi
+            
+            # Display instance information
+            if [ ! -z "$server_id" ] && [ ! -z "$main_ip" ]; then
+              echo "  • $label ($region): $main_ip (Status: $status, ID: $server_id)"
+            fi
+          done
+        fi
+      done
+    fi
     
     if [ "$found_instances" = false ]; then
       echo "  None found"
     fi
     
-    # Check for reserved IPs
+    # Check for reserved IPs using a simpler, more robust approach
     echo ""
     echo "RESERVED IPs:"
     reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
       -H "Authorization: Bearer ${VULTR_API_KEY}")
     
-    # Check if the response contains reserved-ips data
-    if echo "$reserved_ips_response" | grep -q '"reserved_ips"' 2>/dev/null; then
-      # Extract the count more safely
-      total_ip_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' 2>/dev/null | wc -l)
-      
-      if [ "$total_ip_count" -gt 0 ]; then
-        # Process each reserved IP more carefully
-        echo "$reserved_ips_response" | grep -o '{[^}]*"id":"[^"]*"[^}]*}' 2>/dev/null | while read -r ip_obj; do
-          # Extract fields individually with safer methods
-          id=$(echo "$ip_obj" | grep -o '"id":"[^"]*"' 2>/dev/null | cut -d'"' -f4) || id="Unknown"
-          region=$(echo "$ip_obj" | grep -o '"region":"[^"]*"' 2>/dev/null | cut -d'"' -f4) || region="Unknown"
-          ip_type=$(echo "$ip_obj" | grep -o '"ip_type":"[^"]*"' 2>/dev/null | cut -d'"' -f4) || ip_type="Unknown"
-          subnet=$(echo "$ip_obj" | grep -o '"subnet":"[^"]*"' 2>/dev/null | cut -d'"' -f4) || subnet="Unknown"
-          
-          # Label might be missing in some responses, handle that case
-          label=$(echo "$ip_obj" | grep -o '"label":"[^"]*"' 2>/dev/null | cut -d'"' -f4) || label="No Label"
-          
-          echo "  • ${ip_type}: $subnet (${region}) - $label (ID: $id)"
-        done
+    # Simple check if there are any reserved IPs
+    if [[ "$reserved_ips_response" == *"reserved_ips"* ]]; then
+      # Use more basic, safer string presence checks
+      if [[ "$reserved_ips_response" == *"\"id\":"* ]]; then
+        # Found at least one reserved IP
+        found_ips=false
+        
+        # Go through reserved IPs line by line to find key data
+        while IFS= read -r line; do
+          if [[ "$line" == *"\"id\":"* ]]; then
+            id=$(echo "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/' 2>/dev/null) || id="Unknown"
+            found_ips=true
+            
+            # Look for other attributes in nearby lines
+            for i in {1..10}; do
+              region="Unknown"
+              ip_type="Unknown"
+              subnet="Unknown"
+              label="No Label"
+              
+              next_line=$(echo "$reserved_ips_response" | grep -A $i "\"id\":\"$id\"" | tail -1)
+              
+              # Extract region if found
+              if [[ "$next_line" == *"\"region\":"* ]]; then
+                region=$(echo "$next_line" | sed 's/.*"region":"\([^"]*\)".*/\1/' 2>/dev/null) || region="Unknown"
+              fi
+              
+              # Extract IP type if found
+              if [[ "$next_line" == *"\"ip_type\":"* ]]; then
+                ip_type=$(echo "$next_line" | sed 's/.*"ip_type":"\([^"]*\)".*/\1/' 2>/dev/null) || ip_type="Unknown"
+              fi
+              
+              # Extract subnet if found
+              if [[ "$next_line" == *"\"subnet\":"* ]]; then
+                subnet=$(echo "$next_line" | sed 's/.*"subnet":"\([^"]*\)".*/\1/' 2>/dev/null) || subnet="Unknown"
+              fi
+              
+              # Extract label if found
+              if [[ "$next_line" == *"\"label\":"* ]]; then
+                label=$(echo "$next_line" | sed 's/.*"label":"\([^"]*\)".*/\1/' 2>/dev/null) || label="No Label"
+              fi
+            done
+            
+            # Display IP information
+            echo "  • ${ip_type}: $subnet (${region}) - $label (ID: $id)"
+          fi
+        done < <(echo "$reserved_ips_response")
+        
+        if [ "$found_ips" = false ]; then
+          echo "  None found"
+        fi
       else
         echo "  None found"
       fi
