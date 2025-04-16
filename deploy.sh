@@ -41,14 +41,60 @@ get_region_name() {
 
 # Create a log file for deployment
 LOG_FILE="birdbgp_deploy_$(date +%Y%m%d_%H%M%S).log"
-echo "Starting deployment at $(date)" | tee "$LOG_FILE"
 
-# Log function to write to both console and log file
+# Make the starting message stand out and show the log file location
+echo "======================================================="
+echo "  Starting Vultr BGP Anycast Deployment"
+echo "  Time: $(date)"
+echo "  Log file: $LOG_FILE"
+if [ "${VERBOSE:-false}" = "true" ]; then
+  echo "  Mode: VERBOSE (showing all logs)"
+else
+  echo "  Mode: MINIMAL (showing only important logs)"
+  echo "  Run with 'verbose' command to see all logs"
+fi
+echo "======================================================="
+
+# Record to log file
+echo "Starting deployment at $(date)" > "$LOG_FILE"
+
+# Log function with controlled verbosity
 log() {
   local message="$1"
   local level="${2:-INFO}"
   local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
-  echo "[$timestamp] [$level] $message" | tee -a "$LOG_FILE"
+  
+  # Always write full details to log file
+  echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+  
+  # For stdout, only show important messages or control verbosity with VERBOSE env var
+  if [ "${VERBOSE:-false}" = "true" ]; then
+    # Full verbose mode
+    echo "[$timestamp] [$level] $message"
+  else
+    # Less verbose mode - only show important messages
+    case "$level" in
+      "ERROR")
+        # Always show errors with level
+        echo "[ERROR] $message"
+        ;;
+      "WARN")
+        # Always show warnings with level
+        echo "[WARN] $message"
+        ;;
+      "INFO")
+        # For INFO, only show messages that are significant progress indicators
+        if [[ "$message" == *"Starting"* ]] || 
+           [[ "$message" == *"Created"* ]] || 
+           [[ "$message" == *"Completed"* ]] || 
+           [[ "$message" == *"Waiting"* ]] || 
+           [[ "$message" == *"Successfully"* ]]; then
+          echo "$message"
+        fi
+        ;;
+      # DEBUG messages never shown in less verbose mode
+    esac
+  fi
 }
 
 # Error handling function
@@ -1183,7 +1229,7 @@ create_floating_ip() {
   local region=$2
   local ip_type=$3  # ipv4 or ipv6
   
-  echo "Creating floating $ip_type in region $region..."
+  log "Creating floating $ip_type in region $region..." "INFO"
   
   # Convert ip_type to correct format for API (v4 or v6)
   local api_ip_type="v4"
@@ -1196,24 +1242,70 @@ create_floating_ip() {
     floating_ip_id=$(cat "floating_${ip_type}_${region}_id.txt")
     floating_ip=$(cat "floating_${ip_type}_${region}.txt")
     
-    echo "Using existing floating IP: $floating_ip (ID: $floating_ip_id)"
+    log "Using existing floating IP: $floating_ip (ID: $floating_ip_id)" "INFO"
   else
-    # Create a new reserved IP
-    echo "Creating new reserved IP for $ip_type in region $region..."
-    response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips" \
-      -H "Authorization: Bearer ${VULTR_API_KEY}" \
-      -H "Content-Type: application/json" \
-      --data "{
-        \"region\": \"$region\",
-        \"ip_type\": \"$api_ip_type\",
-        \"label\": \"floating-ip${ip_type:1}-$region\"
-      }")
+    # If we encounter IP quota issues, we need to better handle them
+    # First, try an additional cleanup
+    log "Performing extra cleanup before creating reserved IP..." "INFO"
+    cleanup_reserved_ips "true"  # Attempt to clean up ALL IPs
     
-    echo "Reserved IP creation response: $response"
+    # Wait for API to process deletions
+    log "Waiting 60 seconds for Vultr API to process deletions..." "INFO"
+    sleep 60
     
-    # Handle various response formats
-    if [[ "$response" == *"error"* ]]; then
-      echo "Error creating reserved IP: $response"
+    # Now try to create a new reserved IP with retries
+    local max_retries=3
+    local retry_count=0
+    local success=false
+    
+    while [ $retry_count -lt $max_retries ] && [ "$success" = false ]; do
+      # Increment retry counter
+      retry_count=$((retry_count + 1))
+      
+      log "Creating new reserved IP for $ip_type in region $region (attempt $retry_count of $max_retries)..." "INFO"
+      response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}" \
+        -H "Content-Type: application/json" \
+        --data "{
+          \"region\": \"$region\",
+          \"ip_type\": \"$api_ip_type\",
+          \"label\": \"floating-ip${ip_type:1}-$region\"
+        }")
+      
+      log "Reserved IP creation response: $response" "INFO"
+      
+      # Handle various response formats and errors
+      if [[ "$response" == *"error"* ]]; then
+        # Check if it's a quota error
+        if [[ "$response" == *"maximum number"* || "$response" == *"quota"* ]]; then
+          if [ $retry_count -lt $max_retries ]; then
+            log "Hit Vultr IP quota limit. Waiting 30 seconds before retry ($retry_count/$max_retries)..." "WARN"
+            # If it's a quota issue, wait longer to let recently deleted IPs be fully released
+            sleep 30
+            
+            # Perform another cleanup
+            log "Performing another cleanup attempt..." "INFO"
+            cleanup_reserved_ips "true"
+            sleep 30
+          else
+            log "Reached maximum retry attempts. Could not create reserved IP due to quota limits." "ERROR"
+            log "You may need to wait longer or contact Vultr to increase your account limits." "ERROR"
+            return 1
+          fi
+        else
+          # Non-quota error
+          log "Error creating reserved IP: $response" "ERROR"
+          return 1
+        fi
+      else
+        # Success - no error in the response
+        success=true
+      fi
+    done
+    
+    # If we didn't succeed after all retries, return failure
+    if [ "$success" = false ]; then
+      log "Failed to create reserved IP after $max_retries attempts" "ERROR"
       return 1
     fi
     
@@ -2957,96 +3049,119 @@ cleanup_reserved_ips() {
   # Parameter to control whether to delete all IPs or just unused ones
   local delete_all=${1:-false}
   
-  # Show how many IPs we found
-  local total_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
+  # Show how many IPs we found - use a safer method
+  local total_count=0
+  if [[ "$reserved_ips_response" == *"id"* ]]; then
+    total_count=$(echo "$reserved_ips_response" | grep -c '"id"')
+  fi
   log "Found $total_count total reserved IPs in your account" "INFO"
   
   # First handle IPs with our recognized pattern
   log "Processing reserved IPs matching our naming pattern..." "INFO"
-  echo "$reserved_ips_response" | grep -o '{[^{]*"id":"[^"]*"[^}]*"label":"floating-ip[^"]*"[^}]*}' | while read -r ip_obj; do
-    ip_id=$(echo "$ip_obj" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-    ip_label=$(echo "$ip_obj" | grep -o '"label":"[^"]*' | cut -d'"' -f4)
-    ip_subnet=$(echo "$ip_obj" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
-    instance_id=$(echo "$ip_obj" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4)
-    
-    # If delete_all=true OR (instance_id is empty string or "null", it's not attached)
-    if [ "$delete_all" = "true" ] || [ -z "$instance_id" ] || [ "$instance_id" = "null" ] || [ "$instance_id" = '""' ]; then
-      if [ "$delete_all" = "true" ] && [ ! -z "$instance_id" ] && [ "$instance_id" != "null" ] && [ "$instance_id" != '""' ]; then
-        log "Detaching and deleting reserved IP: $ip_label - $ip_subnet (ID: $ip_id) from instance $instance_id" "INFO"
+  
+  # Use safer line-by-line parsing
+  while IFS= read -r line; do
+    if [[ "$line" == *"id"* && "$line" == *"label"* && "$line" == *"floating-ip"* ]]; then
+      # Extract data with fallbacks
+      ip_id=$(echo "$line" | grep -o '"id":"[^"]*' 2>/dev/null | cut -d'"' -f4) || ip_id=""
+      if [ -z "$ip_id" ]; then continue; fi
+      
+      # Get related information
+      ip_label=$(echo "$reserved_ips_response" | grep -A 5 "$ip_id" | grep "label" | 
+                  grep -o '"label":"[^"]*' 2>/dev/null | cut -d'"' -f4) || ip_label="unknown"
+      ip_subnet=$(echo "$reserved_ips_response" | grep -A 5 "$ip_id" | grep "subnet" | 
+                  grep -o '"subnet":"[^"]*' 2>/dev/null | cut -d'"' -f4) || ip_subnet="unknown"
+      instance_id=$(echo "$reserved_ips_response" | grep -A 5 "$ip_id" | grep "instance_id" | 
+                    grep -o '"instance_id":"[^"]*' 2>/dev/null | cut -d'"' -f4 2>/dev/null) || instance_id=""
+      
+      # If delete_all=true OR (instance_id is empty string or "null", it's not attached)
+      if [ "$delete_all" = "true" ] || [ -z "$instance_id" ] || [ "$instance_id" = "null" ] || [ "$instance_id" = '""' ]; then
+        if [ "$delete_all" = "true" ] && [ ! -z "$instance_id" ] && [ "$instance_id" != "null" ] && [ "$instance_id" != '""' ]; then
+          log "Detaching and deleting reserved IP: $ip_label - $ip_subnet (ID: $ip_id) from instance $instance_id" "INFO"
         
-        # Detach first
-        detach_response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips/$ip_id/detach" \
+          # Detach first
+          detach_response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips/$ip_id/detach" \
+            -H "Authorization: Bearer ${VULTR_API_KEY}")
+          log "Detach response: $detach_response" "INFO"
+          
+          # Wait for detachment to complete
+          sleep 3
+        else
+          log "Deleting unused reserved IP: $ip_label - $ip_subnet (ID: $ip_id)" "INFO"
+        fi
+        
+        # Now delete the IP
+        delete_response=$(curl -s -X DELETE "${VULTR_API_ENDPOINT}reserved-ips/$ip_id" \
           -H "Authorization: Bearer ${VULTR_API_KEY}")
-        log "Detach response: $detach_response" "INFO"
         
-        # Wait for detachment to complete
-        sleep 3
+        if [ -z "$delete_response" ]; then
+          log "Successfully deleted reserved IP $ip_label" "INFO"
+        else
+          log "Failed to delete reserved IP $ip_label: $delete_response" "WARN"
+        fi
+        
+        # Wait a moment between deletions to avoid API rate limits
+        sleep 1
       else
-        log "Deleting unused reserved IP: $ip_label - $ip_subnet (ID: $ip_id)" "INFO"
+        log "Skipping attached reserved IP: $ip_label (attached to instance $instance_id)" "INFO"
       fi
-      
-      # Now delete the IP
-      delete_response=$(curl -s -X DELETE "${VULTR_API_ENDPOINT}reserved-ips/$ip_id" \
-        -H "Authorization: Bearer ${VULTR_API_KEY}")
-      
-      if [ -z "$delete_response" ]; then
-        log "Successfully deleted reserved IP $ip_label" "INFO"
-      else
-        log "Failed to delete reserved IP $ip_label: $delete_response" "WARN"
-      fi
-      
-      # Wait a moment between deletions to avoid API rate limits
-      sleep 1
-    else
-      log "Skipping attached reserved IP: $ip_label (attached to instance $instance_id)" "INFO"
     fi
-  done
+  done < <(echo "$reserved_ips_response")
   
   # Now look for any other IPs without labels or with non-standard labels, if delete_all=true
   if [ "$delete_all" = "true" ]; then
     log "Looking for other reserved IPs not matching our naming pattern..." "INFO"
-    echo "$reserved_ips_response" | grep -o '{[^}]*}' | while read -r ip_obj; do
-      # Skip if this is one of our labeled IPs we already processed
-      if [[ "$ip_obj" == *'"label":"floating-ip'* ]]; then
-        continue
-      fi
-      
-      ip_id=$(echo "$ip_obj" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-      if [ -z "$ip_id" ]; then
-        continue
-      fi
-      
-      ip_label=$(echo "$ip_obj" | grep -o '"label":"[^"]*' | cut -d'"' -f4 2>/dev/null || echo "no-label")
-      ip_subnet=$(echo "$ip_obj" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4 2>/dev/null || echo "unknown-ip")
-      instance_id=$(echo "$ip_obj" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4 2>/dev/null || echo "")
-      
-      # If it has an instance ID, detach first
-      if [ ! -z "$instance_id" ] && [ "$instance_id" != "null" ] && [ "$instance_id" != '""' ]; then
-        log "Detaching other reserved IP: $ip_label - $ip_subnet (ID: $ip_id) from instance $instance_id" "INFO"
+    
+    # Process line by line with safer parsing
+    while IFS= read -r line; do
+      if [[ "$line" == *"id"* ]]; then
+        # Extract the ID first
+        ip_id=$(echo "$line" | grep -o '"id":"[^"]*' 2>/dev/null | cut -d'"' -f4) || ip_id=""
+        if [ -z "$ip_id" ]; then continue; fi
         
-        # Detach first
-        detach_response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips/$ip_id/detach" \
+        # Check if this line also contains our label pattern, if so skip it
+        if [[ "$line" == *'"label":"floating-ip'* ]]; then
+          continue
+        fi
+        
+        # Extract the other fields
+        ip_label_line=$(echo "$reserved_ips_response" | grep -A 5 "$ip_id" | grep "label" | head -1)
+        ip_label=$(echo "$ip_label_line" | grep -o '"label":"[^"]*' 2>/dev/null | cut -d'"' -f4) || ip_label="no-label"
+        
+        ip_subnet_line=$(echo "$reserved_ips_response" | grep -A 5 "$ip_id" | grep "subnet" | head -1)
+        ip_subnet=$(echo "$ip_subnet_line" | grep -o '"subnet":"[^"]*' 2>/dev/null | cut -d'"' -f4) || ip_subnet="unknown-ip"
+        
+        instance_id_line=$(echo "$reserved_ips_response" | grep -A 5 "$ip_id" | grep "instance_id" | head -1)
+        instance_id=$(echo "$instance_id_line" | grep -o '"instance_id":"[^"]*' 2>/dev/null | cut -d'"' -f4) || instance_id=""
+      
+        # If it has an instance ID, detach first
+        if [ ! -z "$instance_id" ] && [ "$instance_id" != "null" ] && [ "$instance_id" != '""' ]; then
+          log "Detaching other reserved IP: $ip_label - $ip_subnet (ID: $ip_id) from instance $instance_id" "INFO"
+          
+          # Detach first
+          detach_response=$(curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips/$ip_id/detach" \
+            -H "Authorization: Bearer ${VULTR_API_KEY}")
+          log "Detach response: $detach_response" "INFO"
+          
+          # Wait for detachment to complete
+          sleep 3
+        fi
+        
+        # Now delete the IP
+        log "Deleting other reserved IP: $ip_label - $ip_subnet (ID: $ip_id)" "INFO"
+        delete_response=$(curl -s -X DELETE "${VULTR_API_ENDPOINT}reserved-ips/$ip_id" \
           -H "Authorization: Bearer ${VULTR_API_KEY}")
-        log "Detach response: $detach_response" "INFO"
         
-        # Wait for detachment to complete
-        sleep 3
+        if [ -z "$delete_response" ]; then
+          log "Successfully deleted reserved IP $ip_label" "INFO"
+        else
+          log "Failed to delete reserved IP $ip_label: $delete_response" "WARN"
+        fi
+        
+        # Wait a moment between deletions to avoid API rate limits
+        sleep 1
       fi
-      
-      # Now delete the IP
-      log "Deleting other reserved IP: $ip_label - $ip_subnet (ID: $ip_id)" "INFO"
-      delete_response=$(curl -s -X DELETE "${VULTR_API_ENDPOINT}reserved-ips/$ip_id" \
-        -H "Authorization: Bearer ${VULTR_API_KEY}")
-      
-      if [ -z "$delete_response" ]; then
-        log "Successfully deleted reserved IP $ip_label" "INFO"
-      else
-        log "Failed to delete reserved IP $ip_label: $delete_response" "WARN"
-      fi
-      
-      # Wait a moment between deletions to avoid API rate limits
-      sleep 1
-    done
+    done < <(echo "$reserved_ips_response")
   fi
   
   log "Reserved IP cleanup completed" "INFO"
@@ -3119,12 +3234,38 @@ deploy() {
     # First try to clean up only unused IPs
     cleanup_reserved_ips "false"  # Only delete unused IPs
     
+    # Sleep to give Vultr API time to process deletions
+    log "Waiting 30 seconds for Vultr API to process deletions..." "INFO"
+    sleep 30
+    
     # Check if we still have IPs that might be preventing deployment
     local current_ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
       -H "Authorization: Bearer ${VULTR_API_KEY}")
     
-    local total_count=$(echo "$current_ips" | grep -o '"id":"[^"]*"' | wc -l)
+    local total_count=0
+    if [[ "$current_ips" == *"id"* ]]; then
+      total_count=$(echo "$current_ips" | grep -o '"id":"[^"]*"' | wc -l)
+    fi
+    
     log "After initial cleanup: Found $total_count total reserved IPs in your account" "INFO"
+    
+    # If we have too many IPs, we may need to force delete some
+    if [ $total_count -ge 3 ]; then
+      log "Still have $total_count IPs - Vultr has a limit on how many IPs you can have" "WARN"
+      log "Would you like to force delete ALL reserved IPs (including attached ones)?" "WARN"
+      read -p "Force delete ALL reserved IPs? This is destructive! (y/n): " force_delete_all
+      
+      if [[ $force_delete_all =~ ^[Yy]$ ]]; then
+        log "Force deleting ALL reserved IPs..." "WARN"
+        cleanup_reserved_ips "true"  # Delete ALL IPs, including attached ones
+        
+        # Sleep longer to give Vultr API time to process destructive operations
+        log "Waiting 60 seconds for Vultr API to fully process deletions..." "INFO"
+        sleep 60
+      else
+        log "Continuing without force deleting IPs - deployment may fail due to IP limits" "WARN"
+      fi
+    fi
     
     # If we still have a lot of IPs, more aggressive cleanup may be needed
     if [ "$total_count" -ge 2 ]; then
@@ -3365,21 +3506,38 @@ deploy() {
   reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
     -H "Authorization: Bearer ${VULTR_API_KEY}")
   
-  total_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
+  # Use safer method to count IPs
+  local total_count=0
+  if [[ "$reserved_ips_response" == *"id"* ]]; then
+    total_count=$(echo "$reserved_ips_response" | grep -c '"id"')
+  fi
   log "Found $total_count total reserved IPs in your account" "INFO"
   
   if [ "$total_count" -gt 0 ]; then
     log "WARNING: Found existing reserved IPs that could prevent deployment due to quota limits" "WARN"
-    echo "$reserved_ips_response" | grep -o '"id":"[^"]*","region":"[^"]*","ip_type":"[^"]*","subnet":"[^"]*","subnet_size":[^,]*,"label":"[^"]*"' | \
-    while read -r line; do
-      id=$(echo "$line" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-      region=$(echo "$line" | grep -o '"region":"[^"]*' | cut -d'"' -f4)
-      ip_type=$(echo "$line" | grep -o '"ip_type":"[^"]*' | cut -d'"' -f4)
-      subnet=$(echo "$line" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
-      label=$(echo "$line" | grep -o '"label":"[^"]*' | cut -d'"' -f4)
-      
-      echo "  • ${ip_type}: $subnet (${region}) - $label"
-    done
+    
+    # Process IPs line by line with robust error handling
+    while IFS= read -r line; do
+      if [[ "$line" == *"id"* ]]; then
+        # Extract each field with fallbacks
+        id=$(echo "$line" | grep -o '"id":"[^"]*' 2>/dev/null | cut -d'"' -f4) || id="unknown"
+        
+        # Get related information from nearby lines
+        region_line=$(echo "$reserved_ips_response" | grep -A 5 "$id" | grep "region" | head -1)
+        region=$(echo "$region_line" | grep -o '"region":"[^"]*' 2>/dev/null | cut -d'"' -f4) || region="unknown"
+        
+        ip_type_line=$(echo "$reserved_ips_response" | grep -A 5 "$id" | grep "ip_type" | head -1)
+        ip_type=$(echo "$ip_type_line" | grep -o '"ip_type":"[^"]*' 2>/dev/null | cut -d'"' -f4) || ip_type="unknown"
+        
+        subnet_line=$(echo "$reserved_ips_response" | grep -A 5 "$id" | grep "subnet" | head -1)
+        subnet=$(echo "$subnet_line" | grep -o '"subnet":"[^"]*' 2>/dev/null | cut -d'"' -f4) || subnet="unknown"
+        
+        label_line=$(echo "$reserved_ips_response" | grep -A 5 "$id" | grep "label" | head -1)
+        label=$(echo "$label_line" | grep -o '"label":"[^"]*' 2>/dev/null | cut -d'"' -f4) || label="unknown"
+        
+        echo "  • ${ip_type}: $subnet (${region}) - $label"
+      fi
+    done < <(echo "$reserved_ips_response")
     
     read -p "Would you like to clean up ALL existing reserved IPs before proceeding? (y/n): " cleanup_all
     if [[ $cleanup_all =~ ^[Yy]$ ]]; then
@@ -4335,6 +4493,51 @@ EOF
   echo "BGP community applied successfully to $server_ip"
 }
 
+# Special function to handle IP quotas
+handle_ip_quota_issue() {
+  log "Running special function to handle Vultr IP quota issues..." "WARN"
+  log "This will try more aggressive cleanup options to recover from quota limits" "WARN"
+  
+  # First, try standard cleanup
+  log "Step 1: Cleaning up ALL reserved IPs (including attached ones)..." "INFO"
+  cleanup_reserved_ips "true"
+  
+  # Wait a significant time for Vultr to process
+  log "Waiting 2 minutes for Vultr to fully process IP deletions..." "INFO"
+  log "This longer wait may help with 'recently deleted' IPs that still count against quota" "INFO"
+  sleep 120
+  
+  # Check if we still have IPs in the account
+  local current_ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}")
+  
+  local total_count=0
+  if [[ "$current_ips" == *"id"* ]]; then
+    total_count=$(echo "$current_ips" | grep -c '"id"')
+  fi
+  
+  log "After deep cleanup: Found $total_count reserved IPs in your account" "INFO"
+  
+  if [ $total_count -gt 0 ]; then
+    log "WARNING: You still have $total_count reserved IPs after deep cleanup" "WARN"
+    log "These might be in a 'recently deleted' state that still count against quotas" "WARN"
+    log "Options:" "INFO"
+    log "  1. Wait 24-48 hours for Vultr to fully release the IPs" "INFO"
+    log "  2. Contact Vultr support to increase your account quota" "INFO"
+    log "  3. Use a different account with higher limits" "INFO"
+    
+    # Display the IPs that are still lingering
+    log "Listing remaining reserved IPs:" "INFO"
+    ./deploy.sh list-reserved-ips
+    
+    return 1
+  else
+    log "Successfully cleaned up all reserved IPs" "INFO"
+    log "You should now be able to continue with deployment" "INFO"
+    return 0
+  fi
+}
+
 # Parse command line arguments
 case "$1" in
   setup)
@@ -4356,6 +4559,9 @@ case "$1" in
       exit 1
     fi
     test_ssh "$2" "${3:-root}"
+    ;;
+  fix-ip-quota)
+    handle_ip_quota_issue
     ;;
   rtbh)
     if [ $# -lt 3 ]; then
@@ -4668,34 +4874,79 @@ case "$1" in
     reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
       -H "Authorization: Bearer ${VULTR_API_KEY}")
     
-    total_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
+    # Debug output for response format
+    log "Debug: Reserved IPs response format: ${reserved_ips_response:0:100}..." "DEBUG"
+    
+    # Get count with safer approach
+    total_count=0
+    if [[ "$reserved_ips_response" == *"id"* ]]; then
+      total_count=$(echo "$reserved_ips_response" | grep -c '"id"')
+    fi
+    
     echo "Found $total_count total reserved IPs in your account:"
     echo ""
     
-    # Extract and display the IPs in a readable format
-    echo "$reserved_ips_response" | grep -o '"id":"[^"]*","region":"[^"]*","ip_type":"[^"]*","subnet":"[^"]*","subnet_size":[^,]*,"label":"[^"]*"' | \
-    while read -r line; do
-      id=$(echo "$line" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-      region=$(echo "$line" | grep -o '"region":"[^"]*' | cut -d'"' -f4)
-      ip_type=$(echo "$line" | grep -o '"ip_type":"[^"]*' | cut -d'"' -f4)
-      subnet=$(echo "$line" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
-      label=$(echo "$line" | grep -o '"label":"[^"]*' | cut -d'"' -f4)
-      instance_id=$(echo "$line" | grep -o '"instance_id":"[^"]*' | cut -d'"' -f4 || echo "none")
-      
-      if [ -z "$instance_id" ] || [ "$instance_id" = "none" ]; then
-        status="UNATTACHED"
-      else
-        status="Attached to instance $instance_id"
+    # Process line by line with safer parsing
+    while IFS= read -r line; do
+      if [[ "$line" == *"id"* ]]; then
+        # Extract data with fallbacks
+        ip_id=$(echo "$line" | grep -o '"id":"[^"]*' 2>/dev/null | cut -d'"' -f4) || ip_id=""
+        if [ -z "$ip_id" ]; then continue; fi
+        
+        # Find related fields in the response
+        region="Unknown"
+        ip_type="Unknown"
+        subnet="Unknown"
+        label="No Label"
+        instance_id=""
+        
+        # Look for fields in nearby lines
+        for i in {1..10}; do
+          next_line=$(echo "$reserved_ips_response" | grep -A $i "\"id\":\"$ip_id\"" | tail -1)
+          
+          # Extract region if found
+          if [[ "$next_line" == *"region"* ]]; then
+            region=$(echo "$next_line" | grep -o '"region":"[^"]*' 2>/dev/null | cut -d'"' -f4) || region="Unknown"
+          fi
+          
+          # Extract IP type if found
+          if [[ "$next_line" == *"ip_type"* ]]; then
+            ip_type=$(echo "$next_line" | grep -o '"ip_type":"[^"]*' 2>/dev/null | cut -d'"' -f4) || ip_type="Unknown"
+          fi
+          
+          # Extract subnet if found
+          if [[ "$next_line" == *"subnet"* ]]; then
+            subnet=$(echo "$next_line" | grep -o '"subnet":"[^"]*' 2>/dev/null | cut -d'"' -f4) || subnet="Unknown"
+          fi
+          
+          # Extract label if found
+          if [[ "$next_line" == *"label"* ]]; then
+            label=$(echo "$next_line" | grep -o '"label":"[^"]*' 2>/dev/null | cut -d'"' -f4) || label="No Label"
+          fi
+          
+          # Extract instance_id if found
+          if [[ "$next_line" == *"instance_id"* ]]; then
+            instance_id=$(echo "$next_line" | grep -o '"instance_id":"[^"]*' 2>/dev/null | cut -d'"' -f4) || instance_id=""
+          fi
+        done
+        
+        # Determine status
+        if [ -z "$instance_id" ] || [ "$instance_id" = "null" ] || [ "$instance_id" = '""' ]; then
+          status="UNATTACHED"
+        else
+          status="Attached to instance $instance_id"
+        fi
+        
+        # Display IP information
+        echo "ID: $ip_id"
+        echo "  Region: $region"
+        echo "  IP Type: $ip_type"
+        echo "  Subnet: $subnet"
+        echo "  Label: $label"
+        echo "  Status: $status"
+        echo ""
       fi
-      
-      echo "ID: $id"
-      echo "  Region: $region"
-      echo "  IP Type: $ip_type"
-      echo "  Subnet: $subnet"
-      echo "  Label: $label"
-      echo "  Status: $status"
-      echo ""
-    done
+    done < <(echo "$reserved_ips_response")
     ;;
   force-delete-ip)
     if [ $# -lt 2 ]; then
@@ -4744,12 +4995,28 @@ case "$1" in
       echo "Temporary files cleanup aborted."
     fi
     ;;
+  verbose)
+    export VERBOSE=true
+    if [ $# -lt 2 ]; then
+      echo "Usage: $0 verbose <command> [args...]"
+      echo "Example: $0 verbose deploy"
+      echo "This will run the specified command with verbose output to stdout"
+      exit 1
+    fi
+    
+    # Shift arguments and execute the remaining command with verbose mode
+    shift
+    "$0" "$@"
+    exit $?
+    ;;
+    
   *)
-    echo "Usage: $0 {setup|deploy|deploy resume|monitor|test-failover|test-ssh|rtbh|aspa|community|list-regions|list-all-resources|cleanup-all-resources|cleanup-old-vm|cleanup-reserved-ips|list-reserved-ips|force-delete-ip|cleanup|cleanup-temp-files}"
+    echo "Usage: $0 {setup|deploy|deploy resume|monitor|test-failover|test-ssh|rtbh|aspa|community|list-regions|list-all-resources|cleanup-all-resources|cleanup-old-vm|cleanup-reserved-ips|list-reserved-ips|force-delete-ip|fix-ip-quota|cleanup|cleanup-temp-files|verbose}"
     echo "       $0 test-ssh <hostname_or_ip> [username]"
     echo "       $0 rtbh <server_ip> <target_ip>"
     echo "       $0 aspa <server_ip>"
     echo "       $0 community <server_ip> <community_type> [target_as]"
+    echo "       $0 verbose <command> [args...]    (run command with verbose output)"
     echo ""
     echo "Commands:"
     echo "  setup               - Configure environment variables for deployment"
@@ -4765,12 +5032,17 @@ case "$1" in
     echo "  list-regions         - List available Vultr regions for deployment configuration"
     echo "  list-all-resources   - List all BGP Anycast resources (instances and reserved IPs)"
     echo "  cleanup-all-resources - Clean up all BGP Anycast resources (instances and reserved IPs)"
-    echo "  cleanup-old-vm      - Clean up the old birdbgp-losangeles VM after successful deployment"
+    echo "  cleanup-old-vm       - Clean up the old birdbgp-losangeles VM after successful deployment"
     echo "  cleanup-reserved-ips - Clean up unused floating/reserved IPs to stay within account limits"
     echo "  list-reserved-ips    - List all reserved IPs in your Vultr account"
     echo "  force-delete-ip      - Forcibly delete a specific reserved IP by ID"
-    echo "  cleanup             - Clean up ALL resources created by this script"
+    echo "  fix-ip-quota         - Special utility to handle Vultr IP quota limits (aggressively cleans up IPs)"
+    echo "  cleanup              - Clean up ALL resources created by this script"
     echo "  cleanup-temp-files   - Clean up temporary files without removing cloud resources"
+    echo "  verbose <command>    - Run any command with verbose logging to stdout (all logs still go to log file)"
+    echo ""
+    echo "Environment Variables:"
+    echo "  VERBOSE=true         - Set to enable verbose logging to stdout"
     exit 1
     ;;
 esac
