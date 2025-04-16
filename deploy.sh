@@ -3259,21 +3259,43 @@ deploy() {
   fi
   
   # Done with preliminary checks, starting deployment
+  # Save initial checkpoint
+  save_deployment_state $STAGE_INIT "Deployment started - Initial state"
   
-  total_ip_count=$(echo "$reserved_ips_response" | grep -o '"id":"[^"]*"' | wc -l)
+  # Get current IPs from API
+  local reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}")
+    
+  # Count IPs with safer method that won't cause errors
+  local total_ip_count=0
+  if [[ "$reserved_ips_response" == *"id"* ]]; then
+    total_ip_count=$(echo "$reserved_ips_response" | grep -c '"id"')
+  fi
   existing_reserved_details=""
   
   if [ "$total_ip_count" -gt 0 ]; then
-    echo "$reserved_ips_response" | grep -o '"id":"[^"]*","region":"[^"]*","ip_type":"[^"]*","subnet":"[^"]*","subnet_size":[^,]*,"label":"[^"]*"' | \
-    while read -r line; do
-      id=$(echo "$line" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-      region=$(echo "$line" | grep -o '"region":"[^"]*' | cut -d'"' -f4)
-      ip_type=$(echo "$line" | grep -o '"ip_type":"[^"]*' | cut -d'"' -f4)
-      subnet=$(echo "$line" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
-      label=$(echo "$line" | grep -o '"label":"[^"]*' | cut -d'"' -f4)
+    # Use simpler line-by-line parsing that's less likely to fail
+    while IFS= read -r line; do
+      if [[ "$line" == *"id"* ]]; then
+        # Extract each field individually with safe defaults
+        id=$(echo "$line" | grep -o '"id":"[^"]*' 2>/dev/null | cut -d'"' -f4) || id="unknown"
+        
+        # Look for other fields in nearby lines
+        region_line=$(echo "$reserved_ips_response" | grep -A 5 "$id" | grep "region" | head -1)
+        region=$(echo "$region_line" | grep -o '"region":"[^"]*' 2>/dev/null | cut -d'"' -f4) || region="unknown"
+        
+        ip_type_line=$(echo "$reserved_ips_response" | grep -A 5 "$id" | grep "ip_type" | head -1)
+        ip_type=$(echo "$ip_type_line" | grep -o '"ip_type":"[^"]*' 2>/dev/null | cut -d'"' -f4) || ip_type="unknown"
+        
+        subnet_line=$(echo "$reserved_ips_response" | grep -A 5 "$id" | grep "subnet" | head -1)
+        subnet=$(echo "$subnet_line" | grep -o '"subnet":"[^"]*' 2>/dev/null | cut -d'"' -f4) || subnet="unknown"
+        
+        label_line=$(echo "$reserved_ips_response" | grep -A 5 "$id" | grep "label" | head -1)
+        label=$(echo "$label_line" | grep -o '"label":"[^"]*' 2>/dev/null | cut -d'"' -f4) || label="unknown"
       
-      existing_reserved_details+="  • ${ip_type}: $subnet (${region}) - $label"$'\n'
-    done
+        existing_reserved_details+="  • ${ip_type}: $subnet (${region}) - $label"$'\n'
+      fi
+    done < <(echo "$reserved_ips_response")
   fi
   
   # If we found existing resources, ask user what to do
