@@ -249,10 +249,24 @@ detect_deployment_stage() {
   local reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
     -H "Authorization: Bearer ${VULTR_API_KEY}")
   
-  # Parse reserved IPs with a safer method
-  if [[ "$reserved_ips_response" == *"reserved_ips"* ]]; then
+  # Initialize counters to zero in case the API response can't be parsed
+  ipv4_floating_count=0
+  ipv6_floating_count=0
+  ipv4_attached_count=0
+  ipv6_attached_count=0
+  
+  # Debug log the response for troubleshooting
+  log "Debug: Reserved IPs response format: ${reserved_ips_response:0:100}..." "DEBUG"
+  
+  # Parse reserved IPs with a safer method - handle different possible formats
+  if [[ "$reserved_ips_response" == *"reserved_ips"* || 
+        "$reserved_ips_response" == *\"reserved-ips\"* ||
+        "$reserved_ips_response" == *"reserved-ips"* ]]; then
+    log "Debug: Found 'reserved_ips' in response" "DEBUG"
+    
     # Check if there are any reserved IPs in the response
-    if [[ "$reserved_ips_response" == *"id"* ]]; then
+    if [[ "$reserved_ips_response" == *\"id\"* ]]; then
+      log "Debug: Found 'id' field in response" "DEBUG"
       # First check how many IPs are in the response
       ipv4_floating_count=0
       ipv6_floating_count=0
@@ -261,34 +275,53 @@ detect_deployment_stage() {
       
       # Process line by line to find IPs
       while IFS= read -r line; do
-        if [[ "$line" == *"ip_type"* ]]; then
-          # Parse the IP type
-          if [[ "$line" == *"\"ip_type\":\"v4\""* ]]; then
+        if [[ "$line" == *"ip_type"* || "$line" == *\"ip-type\"* ]]; then
+          # Parse the IP type - handle different formats
+          if [[ "$line" == *"\"ip_type\":\"v4\""* || "$line" == *"\"ip-type\":\"v4\""* || 
+                "$line" == *"\"ip_type\":\"ipv4\""* || "$line" == *"\"ip-type\":\"ipv4\""* ]]; then
             ipv4_floating_count=$((ipv4_floating_count + 1))
             
             # Check if this IP is attached by looking at nearby lines for instance_id
             for i in {1..5}; do
               next_line=$(echo "$reserved_ips_response" | grep -A $i "$line" | tail -1)
-              if [[ "$next_line" == *"instance_id"* && "$next_line" != *"instance_id\":null"* && "$next_line" != *"instance_id\":\"\""* ]]; then
-                ipv4_attached_count=$((ipv4_attached_count + 1))
-                break
+              if [[ "$next_line" == *"instance_id"* || "$next_line" == *"instance-id"* ]]; then
+                # Make sure it's not null or empty
+                if [[ "$next_line" != *"\":null"* && "$next_line" != *"\":\"\""* ]]; then
+                  ipv4_attached_count=$((ipv4_attached_count + 1))
+                  break
+                fi
               fi
             done
-          elif [[ "$line" == *"\"ip_type\":\"v6\""* ]]; then
+          elif [[ "$line" == *"\"ip_type\":\"v6\""* || "$line" == *"\"ip-type\":\"v6\""* || 
+                  "$line" == *"\"ip_type\":\"ipv6\""* || "$line" == *"\"ip-type\":\"ipv6\""* ]]; then
             ipv6_floating_count=$((ipv6_floating_count + 1))
             
             # Check if this IP is attached by looking at nearby lines for instance_id
             for i in {1..5}; do
               next_line=$(echo "$reserved_ips_response" | grep -A $i "$line" | tail -1)
-              if [[ "$next_line" == *"instance_id"* && "$next_line" != *"instance_id\":null"* && "$next_line" != *"instance_id\":\"\""* ]]; then
-                ipv6_attached_count=$((ipv6_attached_count + 1))
-                break
+              if [[ "$next_line" == *"instance_id"* || "$next_line" == *"instance-id"* ]]; then
+                # Make sure it's not null or empty
+                if [[ "$next_line" != *"\":null"* && "$next_line" != *"\":\"\""* ]]; then
+                  ipv6_attached_count=$((ipv6_attached_count + 1))
+                  break
+                fi
               fi
             done
           fi
         fi
       done < <(echo "$reserved_ips_response")
     fi
+  else
+    # Fallback: The response might not match our expected format
+    log "Debug: Response did not match expected format for reserved IPs" "DEBUG"
+    
+    # Just count using a simple grep to be safe
+    ipv4_floating_count=$(echo "$reserved_ips_response" | grep -c '"ip_type":"v4"')
+    ipv6_floating_count=$(echo "$reserved_ips_response" | grep -c '"ip_type":"v6"')
+    
+    # For attached count, just assume none are attached to be safe
+    ipv4_attached_count=0
+    ipv6_attached_count=0
   fi
   
   # Determine the current stage based on what we found
