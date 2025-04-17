@@ -1461,10 +1461,10 @@ create_floating_ip() {
   
   echo "Instance status: $instance_status"
   
-  # Wait for the instance to be fully ready (ok status)
+  # Wait for the instance to be fully ready (active status)
   max_attempts=10
   attempt=1
-  while [ "$instance_status" != "ok" ] && [ $attempt -le $max_attempts ]; do
+  while [ "$instance_status" != "active" ] && [ $attempt -le $max_attempts ]; do
     echo "Instance not ready (status: $instance_status). Waiting 10 seconds (attempt $attempt/$max_attempts)..."
     sleep 10
     instance_status=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances/$instance_id" \
@@ -1587,7 +1587,7 @@ create_floating_ip() {
     # Wait for the instance to be fully ready again if needed
     max_attempts=10
     attempt=1
-    while [ "$instance_status" != "ok" ] && [ $attempt -le $max_attempts ]; do
+    while [ "$instance_status" != "active" ] && [ $attempt -le $max_attempts ]; do
       echo "Instance not ready after restart (status: $instance_status). Waiting 10 seconds (attempt $attempt/$max_attempts)..."
       sleep 10
       instance_status=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances/$instance_id" \
