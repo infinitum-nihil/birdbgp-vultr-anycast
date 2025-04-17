@@ -410,6 +410,12 @@ verify_resources() {
   
   log "Verifying existing resources match expected configuration..." "INFO"
   
+  # Skip strict verification when in resume_mode
+  if [ "$RESUME_MODE" = "true" ]; then
+    log "Running in resume mode - allowing partial resources" "INFO"
+    return 0
+  fi
+  
   # Verification logic based on expected stage
   case $expected_stage in
     $STAGE_SERVERS_CREATED)
@@ -3215,7 +3221,7 @@ cleanup_reserved_ips() {
 
 # Main deployment function
 deploy() {
-  local resume_mode=false
+  local resume_mode=${RESUME_MODE:-false}
   
   # Reset arrays to store resource information
   IPV4_INSTANCES=()
@@ -3224,6 +3230,9 @@ deploy() {
   IPV6_ADDRESS=""
   FLOATING_IPV4_IDS=()
   FLOATING_IPV6_ID=""
+  
+  # Export the variable so other functions can access it
+  export RESUME_MODE=$resume_mode
   
   # Check if we should try to resume a previous deployment
   if [ "$1" = "resume" ]; then
