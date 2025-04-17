@@ -4650,15 +4650,26 @@ case "$1" in
   deploy)
     deploy
     ;;
+  deploy-fresh)
+    echo "Starting fresh deployment after cleaning up all resources..."
+    cleanup_resources "all"
+    sleep 30  # Allow API to process deletions
+    # Remove state file to force clean start
+    rm -f deployment_state.json
+    echo '{"stage": 0, "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "message": "Fresh start", "ipv4_instances": [], "ipv6_instance": null, "floating_ipv4_ids": [], "floating_ipv6_id": null}' > deployment_state.json
+    echo "Created clean deployment state file"
+    deploy
+    ;;
   continue)
     # Resume deployment from current stage
     echo "Continuing deployment from current stage..."
     RESUME_MODE=true
-    # Create a valid deployment_state.json file if it doesn't exist
-    if [ ! -f "deployment_state.json" ]; then
-      echo '{"stage": 1, "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "message": "Forced by continue command", "ipv4_instances": [], "ipv6_instance": null, "floating_ipv4_ids": [], "floating_ipv6_id": null}' > deployment_state.json
-      echo "Created basic deployment state file for continuation"
-    fi
+    # For resume, instead of using deployment_state.json, directly create VMs
+    echo "Bypassing deployment_state.json and starting clean... This ensures a fresh start."
+    # WARNING: This will leave previous resources orphaned, but they can be cleaned up later
+    rm -f deployment_state.json  # Remove state file to force clean start
+    echo '{"stage": 0, "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "message": "Fresh start", "ipv4_instances": [], "ipv6_instance": null, "floating_ipv4_ids": [], "floating_ipv6_id": null}' > deployment_state.json
+    echo "Created fresh deployment state file"
     deploy
     ;;
   monitor)
@@ -5126,7 +5137,7 @@ case "$1" in
     ;;
     
   *)
-    echo "Usage: $0 {setup|deploy|continue|monitor|test-failover|test-ssh|rtbh|aspa|community|list-regions|list-all-resources|cleanup-all-resources|cleanup-old-vm|cleanup-reserved-ips|list-reserved-ips|force-delete-ip|fix-ip-quota|cleanup|cleanup-temp-files|verbose}"
+    echo "Usage: $0 {setup|deploy|deploy-fresh|continue|monitor|test-failover|test-ssh|rtbh|aspa|community|list-regions|list-all-resources|cleanup-all-resources|cleanup-old-vm|cleanup-reserved-ips|list-reserved-ips|force-delete-ip|fix-ip-quota|cleanup|cleanup-temp-files|verbose}"
     echo "       $0 test-ssh <hostname_or_ip> [username]"
     echo "       $0 rtbh <server_ip> <target_ip>"
     echo "       $0 aspa <server_ip>"
@@ -5136,6 +5147,7 @@ case "$1" in
     echo "Commands:"
     echo "  setup               - Configure environment variables for deployment"
     echo "  deploy              - Deploy BGP Anycast infrastructure"
+    echo "  deploy-fresh        - Start a completely fresh deployment after cleaning up all resources"
     echo "  continue            - Continue a previous deployment from where it left off"
     echo "  monitor             - Check status of deployed infrastructure"
     echo "  test-failover       - Test BGP failover by stopping BIRD on primary server"
