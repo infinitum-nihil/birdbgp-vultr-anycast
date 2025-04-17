@@ -275,6 +275,12 @@ load_deployment_state() {
 detect_deployment_stage() {
   log "Detecting current deployment stage from existing resources..." "INFO"
   
+  # For deploy-fresh, force a clean start regardless of what instances are found
+  if [ "$1" = "force-init" ]; then
+    log "Force initializing deployment stage to 0 (fresh start)" "INFO"
+    return 0
+  fi
+  
   local stage=$STAGE_INIT
   local ipv4_count=0
   local ipv6_count=0
@@ -3373,6 +3379,7 @@ cleanup_reserved_ips() {
 # Main deployment function
 deploy() {
   local resume_mode=${RESUME_MODE:-false}
+  local force_fresh=${FORCE_FRESH:-false}
   
   # Reset arrays to store resource information
   IPV4_INSTANCES=()
@@ -3384,11 +3391,18 @@ deploy() {
   
   # Export the variable so other functions can access it
   export RESUME_MODE=$resume_mode
+  export FORCE_FRESH=$force_fresh
   
   # Check if we should try to resume a previous deployment
   if [ "$1" = "resume" ]; then
     resume_mode=true
     log "Starting deployment in RESUME mode - will attempt to continue from previous state" "INFO"
+  fi
+  
+  # Check if this is a forced fresh deployment
+  if [ "$1" = "force-fresh" ]; then
+    force_fresh=true
+    log "Starting deployment in FORCE-FRESH mode - ignoring any existing resources" "INFO"
   fi
   
   # Enable verbose debugging to see exactly what's happening
@@ -3403,7 +3417,12 @@ deploy() {
   # Detect current deployment state
   local current_stage=$STAGE_INIT
   
-  if [ "$resume_mode" = true ]; then
+  if [ "$force_fresh" = true ]; then
+    # Completely fresh deployment, ignore any existing state
+    detect_deployment_stage "force-init"
+    current_stage=0
+    log "Force-fresh mode active: Starting from stage 0 (init)" "INFO"
+  elif [ "$resume_mode" = true ]; then
     # First try to load state from file
     load_deployment_state
     # CRITICAL: Force stage 1 in resume mode to avoid error trap
@@ -4892,7 +4911,7 @@ case "$1" in
     rm -f deployment_state.json
     echo '{"stage": 0, "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "message": "Fresh start", "ipv4_instances": [], "ipv6_instance": null, "floating_ipv4_ids": [], "floating_ipv6_id": null}' > deployment_state.json
     echo "Created clean deployment state file"
-    deploy
+    deploy "force-fresh"
     ;;
   continue)
     # Resume deployment from current stage
