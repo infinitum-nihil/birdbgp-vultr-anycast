@@ -672,7 +672,24 @@ setup_env() {
   read -p "Enter domain name for VM hostnames (e.g., example.com): " domain_name
   domain_name=${domain_name:-"bgp.example.net"}
   
+  # Region configuration
+  echo
+  echo "Region configuration:"
+  echo "You need to specify 3 regions for your BGP servers in order of preference."
+  echo "You can see available regions by running './deploy.sh list-regions'"
+  echo
+  read -p "Primary region for BGP (default: ewr): " primary_region
+  primary_region=${primary_region:-"ewr"}
+  
+  read -p "Secondary region for BGP (default: mia): " secondary_region
+  secondary_region=${secondary_region:-"mia"}
+  
+  read -p "Tertiary region for BGP (default: ord): " tertiary_region
+  tertiary_region=${tertiary_region:-"ord"}
+  
   # Deployment options
+  echo
+  echo "Deployment options:"
   read -p "Deploy with cloud-init? (y/n, default: y): " use_cloud_init
   use_cloud_init=${use_cloud_init:-y}
   if [[ $use_cloud_init =~ ^[Yy]$ ]]; then
@@ -727,6 +744,17 @@ DOMAIN_NAME=${domain_name}
 USE_CLOUD_INIT=${use_cloud_init_value}
 CLEANUP_RESERVED_IPS=${cleanup_ips_value}
 IP_STACK_MODE=${ip_stack_mode}
+
+# BGP region configuration
+BGP_REGION_PRIMARY=${primary_region}
+BGP_REGION_SECONDARY=${secondary_region}
+BGP_REGION_TERTIARY=${tertiary_region}
+
+# Legacy region variables (for backward compatibility)
+IPV4_REGION_PRIMARY=${primary_region}
+IPV4_REGION_SECONDARY=${secondary_region}
+IPV4_REGION_TERTIARY=${tertiary_region}
+IPV6_REGION=${primary_region}
 EOF
 
   echo ".env file created successfully!"
@@ -789,22 +817,58 @@ else
   fi
 fi
 
-# Set regions and plans - can be overridden in .env file
-# Default regions in Americas region but users can change to their preferred regions
-IPV4_REGION_PRIMARY=${IPV4_REGION_PRIMARY:-"ewr"} # Default: Newark
-IPV4_REGION_SECONDARY=${IPV4_REGION_SECONDARY:-"mia"} # Default: Miami
-IPV4_REGION_TERTIARY=${IPV4_REGION_TERTIARY:-"ord"} # Default: Chicago
+# Set regions and plans - sourced from .env file
+# For backward compatibility, check both new and legacy variables
+BGP_REGION_PRIMARY=${BGP_REGION_PRIMARY:-${IPV4_REGION_PRIMARY:-"ewr"}}
+BGP_REGION_SECONDARY=${BGP_REGION_SECONDARY:-${IPV4_REGION_SECONDARY:-"mia"}}
+BGP_REGION_TERTIARY=${BGP_REGION_TERTIARY:-${IPV4_REGION_TERTIARY:-"ord"}}
+
+# Create arrays for BGP regions
+BGP_REGIONS=("$BGP_REGION_PRIMARY" "$BGP_REGION_SECONDARY" "$BGP_REGION_TERTIARY")
+
+# For backward compatibility - will be deprecated in future versions
+IPV4_REGION_PRIMARY=${BGP_REGION_PRIMARY}
+IPV4_REGION_SECONDARY=${BGP_REGION_SECONDARY}
+IPV4_REGION_TERTIARY=${BGP_REGION_TERTIARY}
 IPV4_REGIONS=("$IPV4_REGION_PRIMARY" "$IPV4_REGION_SECONDARY" "$IPV4_REGION_TERTIARY")
-IPV6_REGION=${IPV6_REGION:-"lax"} # Default: Los Angeles
+IPV6_REGION=${BGP_REGION_PRIMARY} # For dual-stack, use primary region for IPv6 too
 
 # Region to BGP community mapping
 # These values are used for Vultr BGP communities based on datacenter location
 declare -A REGION_TO_COMMUNITY=(
+  # North America
   ["ewr"]="11"  # Piscataway, NJ (closest to Newark)
   ["mia"]="12"  # Miami
   ["ord"]="13"  # Chicago
   ["sjc"]="18"  # San Jose
   ["lax"]="17"  # Los Angeles
+  ["sea"]="19"  # Seattle
+  ["atl"]="14"  # Atlanta
+  ["dfw"]="15"  # Dallas
+  ["yto"]="30"  # Toronto
+  ["mex"]="31"  # Mexico City
+  
+  # Europe
+  ["ams"]="24"  # Amsterdam
+  ["fra"]="22"  # Frankfurt
+  ["lhr"]="21"  # London
+  ["cdg"]="23"  # Paris
+  ["mad"]="27"  # Madrid
+  ["waw"]="26"  # Warsaw
+  ["sto"]="25"  # Stockholm
+  
+  # Asia & Oceania
+  ["tyo"]="51"  # Tokyo
+  ["icn"]="53"  # Seoul
+  ["sgp"]="55"  # Singapore
+  ["blr"]="56"  # Bangalore
+  ["syd"]="57"  # Sydney
+  ["nrt"]="52"  # Tokyo (2)
+  ["bom"]="58"  # Mumbai
+  
+  # Africa & Middle East
+  ["jnb"]="71"  # Johannesburg
+  ["tlv"]="72"  # Tel Aviv
 )
 
 # Region to country code mapping (for large communities)
@@ -986,9 +1050,14 @@ runcmd:
   - 'echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections'
   - 'echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections'
   
-  # Create dummy interface for BGP announcements
-  - 'ip link add dummy1 type dummy || true'
-  - 'ip link set dummy1 up'
+  # Create dummy interface for BGP announcements (both IPv4 and IPv6)
+  - 'ip link add dummy0 type dummy || true'
+  - 'ip link set dummy0 up'
+  - 'sysctl -w net.ipv6.conf.all.forwarding=1'  # Enable IPv6 forwarding for BGP
+  - 'sysctl -w net.ipv4.conf.all.forwarding=1'  # Enable IPv4 forwarding for BGP
+  
+  # For dual-stack we need to ensure BGP sessions can be established
+  - 'ip -6 route add 2001:19f0:ffff::1/128 via fe80::201:ffff:fe01:1 dev eth0 || true'  # Critical for IPv6 BGP
   
   # Install CrowdSec with no interactive prompts
   - 'curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash'
@@ -1180,9 +1249,14 @@ runcmd:
   - 'echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections'
   - 'echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections'
   
-  # Create dummy interface for BGP announcements
-  - 'ip link add dummy1 type dummy || true'
-  - 'ip link set dummy1 up'
+  # Create dummy interface for BGP announcements (both IPv4 and IPv6)
+  - 'ip link add dummy0 type dummy || true'
+  - 'ip link set dummy0 up'
+  - 'sysctl -w net.ipv6.conf.all.forwarding=1'  # Enable IPv6 forwarding for BGP
+  - 'sysctl -w net.ipv4.conf.all.forwarding=1'  # Enable IPv4 forwarding for BGP
+  
+  # For dual-stack we need to ensure BGP sessions can be established
+  - 'ip -6 route add 2001:19f0:ffff::1/128 via fe80::201:ffff:fe01:1 dev eth0 || true'  # Critical for IPv6 BGP
   
   # Install CrowdSec with no interactive prompts
   - 'curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash'
@@ -1892,6 +1966,211 @@ create_floating_ip() {
     echo "Continuing deployment, but manual verification may be needed."
   fi
   
+  return 0
+}
+
+# Function to generate dual-stack BIRD configuration (both IPv4 and IPv6)
+generate_dual_stack_bird_config() {
+  local server_type=$1
+  local ipv4=$2
+  local prepend_count=$3
+  local ipv6=$4
+  local config_file="${server_type}_bird.conf"
+  
+  # Calculate the link-local address from the IPv6 address (needed for Vultr IPv6 BGP)
+  local ipv6_suffix=$(echo $ipv6 | sed -E 's/.*:([0-9a-f:]+)/\1/')
+  local link_local="fe80::$ipv6_suffix"
+  
+  echo "Generating dual-stack BIRD configuration for $server_type server..."
+  echo "IPv4 address: $ipv4"
+  echo "IPv6 address: $ipv6"
+  echo "Link-local address: $link_local"
+  echo "Path prepend count: $prepend_count"
+  
+  # Extract region code from server type for BGP community
+  # Format of server_type is expected to be "REGION-dual-*"
+  local region_code=$(echo "$server_type" | cut -d'-' -f1)
+  
+  # Validate region code is not empty
+  if [ -z "$region_code" ]; then
+    echo "ERROR: Could not extract region code from server_type: $server_type"
+    return 1
+  fi
+  
+  # Use region-based BGP community - lookup from the REGION_TO_COMMUNITY array
+  local region_community=""
+  
+  # Get the community value for this region from our mapping
+  if [ "${REGION_TO_COMMUNITY[$region_code]+_}" ]; then
+    region_community="20473:${REGION_TO_COMMUNITY[$region_code]}"
+    echo "Using BGP community $region_community for region $region_code"
+  else
+    # If region not in our mapping, use a default community
+    echo "WARNING: Region $region_code not in REGION_TO_COMMUNITY mapping"
+    region_community="20473:4000"  # Customer route only
+    echo "Using default BGP community $region_community"
+  fi
+  
+  # Start with basic configuration
+  cat > "$config_file" << EOL
+# Dual-stack BIRD 2.0 Configuration (IPv4 + IPv6)
+# Generated for $server_type
+# Path prepend level: $prepend_count
+
+# Global settings
+log syslog all;
+router id $ipv4;
+timeformat protocol iso long;
+timeformat log iso long;
+timeformat table iso long;
+timeformat route iso long;
+
+# Define our own IPv4 and IPv6 prefixes
+define OUR_IPV4_PREFIX = $OUR_IPV4_BGP_RANGE;
+define OUR_IPV6_PREFIX = $OUR_IPV6_BGP_RANGE;
+
+# Set our ASN
+define OUR_ASN = $OUR_AS;
+define VULTR_ASN = 20473;
+
+# Configure protocols for system integration
+protocol device {
+  scan time 10;
+}
+
+# IPv4 kernel protocol
+protocol kernel {
+  scan time 20;
+  ipv4 {
+    import none;
+    export all;
+  };
+}
+
+# IPv6 kernel protocol
+protocol kernel v6 {
+  scan time 20;
+  ipv6 {
+    import none;
+    export all;
+  };
+}
+
+# Configure direct protocol for interfaces
+protocol direct {
+  ipv4;
+  ipv6;
+}
+
+#####################
+# IPv4 Configuration
+#####################
+
+# Create a dummy interface for IPv4 BGP announcements
+protocol static ipv4_routes {
+  ipv4;
+  route OUR_IPV4_PREFIX via "dummy0";
+}
+
+# Configure IPv4 BGP session with Vultr route server
+protocol bgp vultr_ipv4 {
+  description "IPv4 BGP session with Vultr";
+  local as OUR_ASN;
+  neighbor 169.254.169.254 as VULTR_ASN;
+  password "$VULTR_BGP_PASSWORD";
+  multihop;
+  ipv4 {
+    import all;
+    export where net ~ [ OUR_IPV4_PREFIX ];
+  };
+  
+  # BGP path prepending via community
+EOL
+
+  # Add prepending communities based on server role
+  if [ $prepend_count -gt 0 ]; then
+    # Use Vultr-specific communities instead of manual path prepending
+    if [ $prepend_count -eq 1 ]; then
+      echo "  # 1x path prepending for secondary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6001);" >> "$config_file"
+    elif [ $prepend_count -eq 2 ]; then
+      echo "  # 2x path prepending for tertiary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6002);" >> "$config_file"
+    elif [ $prepend_count -eq 3 ]; then
+      echo "  # 3x path prepending for quaternary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6003);" >> "$config_file"
+    fi
+  else
+    echo "  # Primary server - no path prepending" >> "$config_file"
+  fi
+
+  # Add location-specific BGP community
+  cat >> "$config_file" << EOL
+  
+  # Add BGP communities
+  add bgp_community += (20473, 4000); # Customer-originated route
+  add bgp_community += ($region_community); # Datacenter location
+}
+
+#####################
+# IPv6 Configuration
+#####################
+
+# Create a dummy interface for IPv6 BGP announcements
+protocol static ipv6_routes {
+  ipv6;
+  route OUR_IPV6_PREFIX via "dummy0";
+}
+
+# Static route to Vultr's IPv6 BGP endpoint (REQUIRED)
+# This is crucial for IPv6 BGP to work and not well-documented by Vultr
+protocol static vultr_ipv6_static {
+  ipv6;
+  route 2001:19f0:ffff::1/128 via $link_local;
+}
+
+# Configure IPv6 BGP session with Vultr route server
+protocol bgp vultr_ipv6 {
+  description "IPv6 BGP session with Vultr";
+  local as OUR_ASN;
+  neighbor 2001:19f0:ffff::1 as VULTR_ASN;
+  password "$VULTR_BGP_PASSWORD";
+  multihop;
+  ipv6 {
+    import all;
+    export where net ~ [ OUR_IPV6_PREFIX ];
+  };
+  
+  # BGP path prepending via community
+EOL
+
+  # Add prepending communities for IPv6 BGP based on server role (same as IPv4)
+  if [ $prepend_count -gt 0 ]; then
+    # Use Vultr-specific communities instead of manual path prepending
+    if [ $prepend_count -eq 1 ]; then
+      echo "  # 1x path prepending for secondary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6001);" >> "$config_file"
+    elif [ $prepend_count -eq 2 ]; then
+      echo "  # 2x path prepending for tertiary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6002);" >> "$config_file"
+    elif [ $prepend_count -eq 3 ]; then
+      echo "  # 3x path prepending for quaternary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6003);" >> "$config_file"
+    fi
+  else
+    echo "  # Primary server - no path prepending" >> "$config_file"
+  fi
+
+  # Add location-specific BGP community for IPv6
+  cat >> "$config_file" << EOL
+  
+  # Add BGP communities
+  add bgp_community += (20473, 4000); # Customer-originated route
+  add bgp_community += ($region_community); # Datacenter location
+}
+EOL
+
+  echo "Dual-stack BIRD configuration generated at $config_file"
   return 0
 }
 
@@ -2787,6 +3066,38 @@ EOF
 }
 
 # Function to deploy IPv6 BIRD configuration to a server
+deploy_dual_stack_bird_config() {
+  local server_type=$1
+  local server_ip=$2
+  local config_file="${server_type}_bird.conf"
+  
+  echo "Deploying dual-stack BIRD configuration to $server_type server at $server_ip..."
+  
+  # Upload BIRD configuration
+  scp -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" "$config_file" "root@$server_ip:/etc/bird/bird.conf"
+  
+  # Configure dummy interface for IPv4 and IPv6 announcements
+  ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" "root@$server_ip" << 'EOL'
+# Create and configure dummy interface for both IPv4 and IPv6
+ip link add dummy0 type dummy || true
+ip link set dummy0 up
+sysctl -w net.ipv6.conf.all.forwarding=1
+sysctl -w net.ipv4.conf.all.forwarding=1
+
+# Add static route to Vultr IPv6 BGP endpoint (REQUIRED)
+ip -6 route add 2001:19f0:ffff::1/128 via fe80::201:ffff:fe01:1 dev eth0 || true
+
+# Restart BIRD
+systemctl restart bird
+
+# Make sure it started correctly
+systemctl status bird
+EOL
+  
+  echo "Dual-stack BIRD configuration deployed to $server_type server"
+  return 0
+}
+
 deploy_ipv6_bird_config() {
   local server_type=$1
   local ipv4=$2
@@ -3610,11 +3921,13 @@ deploy() {
       dual|*)
         log "Deploying dual-stack BGP Anycast infrastructure..." "INFO"
         
-        # Create all instances
-        create_instance "${IPV4_REGIONS[0]}" "ewr-ipv4-bgp-primary-1c1g" "1" "false" || { echo "Failed to create primary instance"; exit 1; }
-        create_instance "${IPV4_REGIONS[1]}" "mia-ipv4-bgp-secondary-1c1g" "2" "false" || { echo "Failed to create secondary instance"; exit 1; }
-        create_instance "${IPV4_REGIONS[2]}" "ord-ipv4-bgp-tertiary-1c1g" "3" "false" || { echo "Failed to create tertiary instance"; exit 1; }
-        create_instance "${IPV6_REGION}" "lax-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
+        # Create all instances with dual-stack support (IPv4+IPv6) - using region variables from .env
+        create_instance "${BGP_REGIONS[0]}" "${BGP_REGIONS[0]}-dual-bgp-primary-1c1g" "1" "true" || { echo "Failed to create primary instance"; exit 1; }
+        create_instance "${BGP_REGIONS[1]}" "${BGP_REGIONS[1]}-dual-bgp-secondary-1c1g" "2" "true" || { echo "Failed to create secondary instance"; exit 1; }
+        create_instance "${BGP_REGIONS[2]}" "${BGP_REGIONS[2]}-dual-bgp-tertiary-1c1g" "3" "true" || { echo "Failed to create tertiary instance"; exit 1; }
+        
+        # No longer need a separate IPv6-only instance as all servers have IPv6 enabled
+        log "All servers now configured with dual-stack IPv4/IPv6 support" "INFO"
         ;;
     esac
     
@@ -4128,10 +4441,11 @@ deploy() {
       save_deployment_state $STAGE_IPS_ATTACHED "All floating IPs attached to instances"
       
       # Generate BIRD configurations
-      generate_ipv4_bird_config "ewr-ipv4-primary" "$(cat ewr-ipv4-bgp-primary-1c1g_ipv4.txt)" 0
-      generate_ipv4_bird_config "mia-ipv4-secondary" "$(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt)" 1
-      generate_ipv4_bird_config "ord-ipv4-tertiary" "$(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt)" 2
-      generate_ipv6_bird_config "lax-ipv6" "$(cat lax-ipv6-bgp-1c1g_ipv4.txt)" "$(cat lax-ipv6-bgp-1c1g_ipv6.txt)"
+      # Now each server gets a dual-stack configuration with both IPv4 and IPv6 announcements
+      # Each server will announce both IPv4 and IPv6 prefixes following same prepending hierarchy
+      generate_dual_stack_bird_config "${BGP_REGIONS[0]}-dual-primary" "$(cat ${BGP_REGIONS[0]}-dual-bgp-primary-1c1g_ipv4.txt)" 0 "$(cat ${BGP_REGIONS[0]}-dual-bgp-primary-1c1g_ipv6.txt)"
+      generate_dual_stack_bird_config "${BGP_REGIONS[1]}-dual-secondary" "$(cat ${BGP_REGIONS[1]}-dual-bgp-secondary-1c1g_ipv4.txt)" 1 "$(cat ${BGP_REGIONS[1]}-dual-bgp-secondary-1c1g_ipv6.txt)"
+      generate_dual_stack_bird_config "${BGP_REGIONS[2]}-dual-tertiary" "$(cat ${BGP_REGIONS[2]}-dual-bgp-tertiary-1c1g_ipv4.txt)" 2 "$(cat ${BGP_REGIONS[2]}-dual-bgp-tertiary-1c1g_ipv6.txt)"
       
       # Save checkpoint after BIRD configs are generated
       save_deployment_state $STAGE_BIRD_CONFIGS "All BIRD configurations generated"
@@ -4267,11 +4581,13 @@ deploy() {
     return 1
   fi
   
-  # Deploy BIRD configurations
-  deploy_ipv4_bird_config "ewr-ipv4-primary" "$(cat ewr-ipv4-bgp-primary-1c1g_ipv4.txt)" "$(cat floating_ipv4_${IPV4_REGIONS[0]}.txt)"
-  deploy_ipv4_bird_config "mia-ipv4-secondary" "$(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt)" "$(cat floating_ipv4_${IPV4_REGIONS[1]}.txt)"
-  deploy_ipv4_bird_config "ord-ipv4-tertiary" "$(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt)" "$(cat floating_ipv4_${IPV4_REGIONS[2]}.txt)"
-  deploy_ipv6_bird_config "lax-ipv6" "$(cat lax-ipv6-bgp-1c1g_ipv4.txt)" "$(cat floating_ipv6_${IPV6_REGION}.txt)"
+  # Deploy BIRD configurations - Now using dual-stack configs on all servers
+  deploy_dual_stack_bird_config "${BGP_REGIONS[0]}-dual-primary" "$(cat ${BGP_REGIONS[0]}-dual-bgp-primary-1c1g_ipv4.txt)"
+  deploy_dual_stack_bird_config "${BGP_REGIONS[1]}-dual-secondary" "$(cat ${BGP_REGIONS[1]}-dual-bgp-secondary-1c1g_ipv4.txt)"
+  deploy_dual_stack_bird_config "${BGP_REGIONS[2]}-dual-tertiary" "$(cat ${BGP_REGIONS[2]}-dual-bgp-tertiary-1c1g_ipv4.txt)"
+  
+  # No longer need a separate IPv6-only server as all servers now have dual-stack support
+  log "All servers now have dual-stack BGP support (IPv4+IPv6)" INFO
   
   # Save checkpoint after BIRD configs are deployed
   save_deployment_state $STAGE_CONFIGS_DEPLOYED "All BIRD configurations deployed to servers"
