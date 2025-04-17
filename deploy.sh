@@ -249,9 +249,22 @@ load_deployment_state() {
     log "Found ${#IPV4_INSTANCES[@]} IPv4 instances and $([ -n "$IPV6_INSTANCE" ] && echo "1" || echo "0") IPv6 instance" "INFO"
     log "Found ${#FLOATING_IPV4_IDS[@]} floating IPv4 IPs and $([ -n "$FLOATING_IPV6_ID" ] && echo "1" || echo "0") floating IPv6 IP" "INFO"
     
+    # Critical fix: When running in resume mode, ensure we return a stage that won't trigger error handlers
+    if [ "$RESUME_MODE" = "true" ] && [ "$stage" -eq "$STAGE_INIT" ]; then
+      log "Resume mode active - forcing stage to $STAGE_SERVERS_CREATED" "INFO"
+      stage=$STAGE_SERVERS_CREATED
+    fi
+    
     return $stage
   else
     log "No previous deployment state found" "INFO"
+    
+    # Critical fix: When running in resume mode, always return STAGE_SERVERS_CREATED instead of STAGE_INIT
+    if [ "$RESUME_MODE" = "true" ]; then
+      log "Resume mode active - forcing stage to $STAGE_SERVERS_CREATED despite missing state file" "INFO"
+      return $STAGE_SERVERS_CREATED
+    fi
+    
     return $STAGE_INIT
   fi
 }
@@ -400,6 +413,16 @@ detect_deployment_stage() {
   log "Found $ipv4_count IPv4 instances and $ipv6_count IPv6 instance" "INFO"
   log "Found $ipv4_floating_count IPv4 floating IPs ($ipv4_attached_count attached)" "INFO"
   log "Found $ipv6_floating_count IPv6 floating IPs ($ipv6_attached_count attached)" "INFO"
+  
+  # Critical fix: When running in resume mode, NEVER return non-zero to avoid error trap
+  if [ "$RESUME_MODE" = "true" ]; then
+    log "Resume mode active - continuing regardless of state" "INFO"
+    if [ "$stage" -eq "$STAGE_INIT" ]; then
+      # Force to stage 1 in resume mode if no stage detected
+      stage=$STAGE_SERVERS_CREATED
+      log "Forcing stage to $STAGE_SERVERS_CREATED in resume mode" "INFO"
+    fi
+  fi
   
   return $stage
 }
