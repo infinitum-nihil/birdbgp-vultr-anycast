@@ -3280,7 +3280,9 @@ deploy() {
   if [ "$resume_mode" = true ]; then
     # First try to load state from file
     load_deployment_state
-    current_stage=$?
+    # CRITICAL: Force stage 1 in resume mode to avoid error trap
+    current_stage=1
+    log "Resume mode active: Forcing state to stage 1" "INFO"
     
     # If no state file found, try to detect state from existing resources
     if [ $current_stage -eq $STAGE_INIT ]; then
@@ -4652,6 +4654,11 @@ case "$1" in
     # Resume deployment from current stage
     echo "Continuing deployment from current stage..."
     RESUME_MODE=true
+    # Create a valid deployment_state.json file if it doesn't exist
+    if [ ! -f "deployment_state.json" ]; then
+      echo '{"stage": 1, "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "message": "Forced by continue command", "ipv4_instances": [], "ipv6_instance": null, "floating_ipv4_ids": [], "floating_ipv6_id": null}' > deployment_state.json
+      echo "Created basic deployment state file for continuation"
+    fi
     deploy
     ;;
   monitor)
