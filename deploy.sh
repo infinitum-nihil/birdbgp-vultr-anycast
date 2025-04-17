@@ -261,8 +261,10 @@ load_deployment_state() {
     
     # Critical fix: When running in resume mode, always return STAGE_SERVERS_CREATED instead of STAGE_INIT
     if [ "$RESUME_MODE" = "true" ]; then
-      log "Resume mode active - forcing stage to $STAGE_SERVERS_CREATED despite missing state file" "INFO"
-      return $STAGE_SERVERS_CREATED
+      stage=$STAGE_SERVERS_CREATED
+      log "Resume mode active - forcing stage to $stage despite missing state file" "INFO"
+      save_deployment_state $stage "Forced stage in resume mode"
+      return $stage
     fi
     
     return $STAGE_INIT
