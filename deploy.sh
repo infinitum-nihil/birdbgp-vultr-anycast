@@ -1321,17 +1321,58 @@ create_floating_ip() {
     
     log "Using existing floating IP: $floating_ip (ID: $floating_ip_id)" "INFO"
   else
-    # If we encounter IP quota issues, we need to better handle them
-    # First, try an additional cleanup
-    log "Performing extra cleanup before creating reserved IP..." "INFO"
-    cleanup_reserved_ips "true"  # Attempt to clean up ALL IPs
+    # ENHANCED QUOTA HANDLING: Better management of IP quota
+    log "Checking quota before creating reserved IP..." "INFO"
     
-    # Wait for API to process deletions
-    log "Waiting 60 seconds for Vultr API to process deletions..." "INFO"
-    sleep 60
+    # DO NOT clean up IPs here as that's causing our issues
+    # Instead, just check if we're at the quota limit
+    reserved_ip_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+      -H "Authorization: Bearer ${VULTR_API_KEY}")
+    reserved_ip_count=$(echo "$reserved_ip_response" | grep -o '"id"' | wc -l)
+    
+    log "Current reserved IP count: $reserved_ip_count" "INFO"
+    
+    # ENHANCED: Check for our own IPs first - try to use them if they exist but aren't properly tracked locally
+    # This avoids creating duplicates when deployment resumes
+    log "Checking if we already have a floating IP for this region/type but files are missing..." "INFO"
+    if echo "$reserved_ip_response" | grep -q "floating-ip${ip_type:1}-$region"; then
+      log "Found potential matching IP in API response - attempting to recover..." "INFO"
+      
+      # Extract the ID and IP from existing entries
+      local matching_id=$(echo "$reserved_ip_response" | grep -o '{[^{]*"label":"floating-ip'"${ip_type:1}"'-'"$region"'"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4 | head -1)
+      local matching_ip=$(echo "$reserved_ip_response" | grep -o '{[^{]*"label":"floating-ip'"${ip_type:1}"'-'"$region"'"[^}]*}' | grep -o '"subnet":"[^"]*' | cut -d'"' -f4 | head -1)
+      
+      if [ -n "$matching_id" ] && [ -n "$matching_ip" ]; then
+        log "Recovered existing floating IP: $matching_ip (ID: $matching_id)" "INFO"
+        
+        # Save the found IP and ID to files
+        echo "$matching_id" > "floating_${ip_type}_${region}_id.txt"
+        echo "$matching_ip" > "floating_${ip_type}_${region}.txt"
+        
+        # Also save in alternative formats for compatibility
+        echo "$matching_id" > "floating-${ip_type}_${region}_id.txt"
+        echo "$matching_ip" > "floating-${ip_type}_${region}.txt"
+        
+        # Set variables for return
+        floating_ip_id="$matching_id"
+        floating_ip="$matching_ip"
+        
+        # Return success
+        return 0
+      fi
+    fi
+    
+    # If we already have some IPs, wait longer to ensure API rate limits reset
+    if [ $reserved_ip_count -gt 0 ]; then
+      log "Waiting 180 seconds for Vultr API rate limits to reset..." "INFO"
+      sleep 180
+    else
+      log "No existing IPs - waiting 30 seconds before creating new IP..." "INFO"
+      sleep 30
+    fi
     
     # Now try to create a new reserved IP with retries
-    local max_retries=3
+    local max_retries=5  # Increased from 3 to 5 for more persistence
     local retry_count=0
     local success=false
     
@@ -1354,19 +1395,55 @@ create_floating_ip() {
       # Handle various response formats and errors
       if [[ "$response" == *"error"* ]]; then
         # Check if it's a quota error
-        if [[ "$response" == *"maximum number"* || "$response" == *"quota"* ]]; then
+        if [[ "$response" == *"maximum number"* || "$response" == *"quota"* || "$response" == *"exceeded"* || "$response" == *"limit"* || "$response" == *"rate limit"* ]]; then
           if [ $retry_count -lt $max_retries ]; then
-            log "Hit Vultr IP quota limit. Waiting 30 seconds before retry ($retry_count/$max_retries)..." "WARN"
-            # If it's a quota issue, wait longer to let recently deleted IPs be fully released
-            sleep 30
+            # ENHANCED: Longer exponential backoff with randomization to avoid API rate limit synchronization
+            local base_backoff=$((180 * retry_count))
+            local jitter=$((RANDOM % 60))
+            local backoff_time=$((base_backoff + jitter))
             
-            # Perform another cleanup
-            log "Performing another cleanup attempt..." "INFO"
-            cleanup_reserved_ips "true"
-            sleep 30
+            log "Hit Vultr API rate/quota limit. Waiting $backoff_time seconds before retry ($retry_count/$max_retries)..." "WARN"
+            
+            # Get the current IPs to see what's happening
+            current_ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+              -H "Authorization: Bearer ${VULTR_API_KEY}")
+            
+            # Check again if our IP was created despite the error
+            if echo "$current_ips" | grep -q "floating-ip${ip_type:1}-$region"; then
+              log "Found IP with our label despite error response - trying to recover..." "INFO"
+              
+              # Extract the ID and IP from existing entries
+              local recovery_id=$(echo "$current_ips" | grep -o '{[^{]*"label":"floating-ip'"${ip_type:1}"'-'"$region"'"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4 | head -1)
+              local recovery_ip=$(echo "$current_ips" | grep -o '{[^{]*"label":"floating-ip'"${ip_type:1}"'-'"$region"'"[^}]*}' | grep -o '"subnet":"[^"]*' | cut -d'"' -f4 | head -1)
+              
+              if [ -n "$recovery_id" ] && [ -n "$recovery_ip" ]; then
+                log "Successfully recovered IP despite API error: $recovery_ip (ID: $recovery_id)" "INFO"
+                
+                # Save the found IP and ID to files
+                echo "$recovery_id" > "floating_${ip_type}_${region}_id.txt"
+                echo "$recovery_ip" > "floating_${ip_type}_${region}.txt"
+                
+                # Also save in alternative formats for compatibility
+                echo "$recovery_id" > "floating-${ip_type}_${region}_id.txt"
+                echo "$recovery_ip" > "floating-${ip_type}_${region}.txt"
+                
+                # Set variables for return
+                floating_ip_id="$recovery_id"
+                floating_ip="$recovery_ip"
+                
+                # Mark as success and break the loop
+                success=true
+                break
+              fi
+            fi
+            
+            # Wait with exponential backoff
+            log "Waiting $backoff_time seconds before retry..." "INFO"
+            sleep $backoff_time
           else
-            log "Reached maximum retry attempts. Could not create reserved IP due to quota limits." "ERROR"
+            log "Reached maximum retry attempts. Could not create floating IP due to quota/rate limits." "ERROR"
             log "You may need to wait longer or contact Vultr to increase your account limits." "ERROR"
+            log "You can also try running './deploy.sh fix-ip-quota' to resolve IP quota issues." "INFO"
             return 1
           fi
         else
@@ -1390,9 +1467,11 @@ create_floating_ip() {
     floating_ip_id=""
     floating_ip=""
     
+    log "Extracting IP details from API response..." "INFO"
+    
     # Format 1: Nested in reserved_ip object
     if [[ "$response" == *'"reserved_ip":'* ]]; then
-      echo "Parsing response format 1 (nested reserved_ip object)"
+      log "Parsing response format 1 (nested reserved_ip object)" "DEBUG"
       # Extract the nested object
       reserved_ip_obj=$(echo "$response" | grep -o '"reserved_ip":{[^}]*}' | sed 's/"reserved_ip"://g')
       
@@ -1400,35 +1479,81 @@ create_floating_ip() {
       floating_ip_id=$(echo "$reserved_ip_obj" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
       floating_ip=$(echo "$reserved_ip_obj" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
       
-      echo "Extracted from nested object - ID: $floating_ip_id, IP: $floating_ip"
+      log "Extracted from nested object - ID: $floating_ip_id, IP: $floating_ip" "DEBUG"
     fi
     
     # Format 2: Direct in response
     if [ -z "$floating_ip_id" ] || [ -z "$floating_ip" ]; then
-      echo "Trying parse format 2 (direct response)"
+      log "Trying parse format 2 (direct response)" "DEBUG"
       floating_ip_id=$(echo "$response" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
       floating_ip=$(echo "$response" | grep -o '"subnet":"[^"]*' | cut -d'"' -f4)
       
-      echo "Extracted direct - ID: $floating_ip_id, IP: $floating_ip"
+      log "Extracted direct - ID: $floating_ip_id, IP: $floating_ip" "DEBUG"
     fi
     
     # Format 3: Alternative field names
     if [ -z "$floating_ip" ]; then
-      echo "Trying parse format 3 (alternative field names)"
+      log "Trying parse format 3 (alternative field names)" "DEBUG"
       floating_ip=$(echo "$response" | grep -o '"ip":"[^"]*' | cut -d'"' -f4)
-      echo "Extracted alternative - IP: $floating_ip"
+      log "Extracted alternative - IP: $floating_ip" "DEBUG"
+    fi
+    
+    # ENHANCED: Format 4 - Check if the response is JSON and try to parse with regex patterns
+    if [ -z "$floating_ip_id" ] || [ -z "$floating_ip" ]; then
+      log "Trying advanced regex patterns on JSON response..." "DEBUG"
+      
+      # Try to find any ID pattern in a JSON structure
+      if [ -z "$floating_ip_id" ]; then
+        floating_ip_id=$(echo "$response" | grep -o '[{,]"id":[[:space:]]*"[^"]*"' | sed 's/.*"id":[[:space:]]*"\([^"]*\)".*/\1/' | head -1)
+        log "Advanced ID extraction: $floating_ip_id" "DEBUG"
+      fi
+      
+      # Try to find any IP/subnet pattern in a JSON structure
+      if [ -z "$floating_ip" ]; then
+        # Try subnet field first
+        floating_ip=$(echo "$response" | grep -o '[{,]"subnet":[[:space:]]*"[^"]*"' | sed 's/.*"subnet":[[:space:]]*"\([^"]*\)".*/\1/' | head -1)
+        
+        # If still empty, try ip field
+        if [ -z "$floating_ip" ]; then
+          floating_ip=$(echo "$response" | grep -o '[{,]"ip":[[:space:]]*"[^"]*"' | sed 's/.*"ip":[[:space:]]*"\([^"]*\)".*/\1/' | head -1)
+        fi
+        
+        log "Advanced IP extraction: $floating_ip" "DEBUG"
+      fi
+    fi
+    
+    # ENHANCED: Format 5 - as a last resort, check Vultr API directly for the IP we just created
+    if [ -z "$floating_ip_id" ] || [ -z "$floating_ip" ]; then
+      log "Still missing IP details. Checking Vultr API directly for recently created IPs..." "INFO"
+      
+      # Give the API a moment to register the new IP
+      sleep 10
+      
+      # Get all reserved IPs and look for our label
+      api_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}")
+      
+      if echo "$api_response" | grep -q "floating-ip${ip_type:1}-$region"; then
+        log "Found our IP in the API! Extracting details..." "INFO"
+        
+        # Extract the first matching IP and ID
+        floating_ip_id=$(echo "$api_response" | grep -o '{[^{]*"label":"floating-ip'"${ip_type:1}"'-'"$region"'"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4 | head -1)
+        floating_ip=$(echo "$api_response" | grep -o '{[^{]*"label":"floating-ip'"${ip_type:1}"'-'"$region"'"[^}]*}' | grep -o '"subnet":"[^"]*' | cut -d'"' -f4 | head -1)
+        
+        log "Extracted from API - ID: $floating_ip_id, IP: $floating_ip" "INFO"
+      fi
     fi
     
     # Final validation
     if [ -z "$floating_ip_id" ]; then
-      echo "Failed to extract reserved IP ID from response!"
-      echo "Raw response: $response"
+      log "Failed to extract reserved IP ID from response!" "ERROR"
+      log "Raw response: $response" "ERROR"
       return 1
     fi
     
     if [ -z "$floating_ip" ]; then
-      echo "Failed to extract reserved IP address from response!"
-      echo "Raw response: $response"
+      log "Failed to extract reserved IP address from response!" "ERROR"
+      log "Raw response: $response" "ERROR"
       return 1
     fi
     
@@ -3648,9 +3773,23 @@ deploy() {
       # Save checkpoint after instances are created
       save_deployment_state $STAGE_SERVERS_CREATED "IPv4 instances created successfully"
       
-      # Create floating IPs for IPv4 instances
+      # CRITICAL FIX: Create floating IPs for each instance with deliberate delays between operations
+      log "Creating floating IPs with sufficient delays between operations to avoid API rate limits..." "INFO"
+      
+      # Create primary IP
+      log "Creating floating IP for primary instance (EWR)..." "INFO"
       create_floating_ip "$(cat ewr-ipv4-bgp-primary-1c1g_id.txt)" "${IPV4_REGIONS[0]}" "ipv4" || { echo "Failed to create floating IP for primary instance"; exit 1; }
+      log "Waiting 180 seconds before creating next IP to avoid API limits..." "INFO"
+      sleep 180
+      
+      # Create secondary IP
+      log "Creating floating IP for secondary instance (MIA)..." "INFO"
       create_floating_ip "$(cat mia-ipv4-bgp-secondary-1c1g_id.txt)" "${IPV4_REGIONS[1]}" "ipv4" || { echo "Failed to create floating IP for secondary instance"; exit 1; }
+      log "Waiting 180 seconds before creating next IP to avoid API limits..." "INFO"
+      sleep 180
+      
+      # Create tertiary IP
+      log "Creating floating IP for tertiary instance (ORD)..." "INFO"
       create_floating_ip "$(cat ord-ipv4-bgp-tertiary-1c1g_id.txt)" "${IPV4_REGIONS[2]}" "ipv4" || { echo "Failed to create floating IP for tertiary instance"; exit 1; }
       
       # Save checkpoint after floating IPs are created
@@ -3677,7 +3816,15 @@ deploy() {
       # Save checkpoint after instance is created
       save_deployment_state $STAGE_SERVERS_CREATED "IPv6 instance created successfully"
       
+      # CRITICAL FIX: Create floating IP for IPv6 instance with proper rate limit handling
+      log "Creating floating IP with appropriate delay to avoid API rate limits..." "INFO"
+      
+      # Wait before creating IP to avoid potential rate limits
+      log "Waiting 30 seconds before creating IPv6 floating IP..." "INFO"
+      sleep 30
+      
       # Create floating IP for IPv6 instance
+      log "Creating floating IP for IPv6 instance (LAX)..." "INFO"
       create_floating_ip "$(cat lax-ipv6-bgp-1c1g_id.txt)" "${IPV6_REGION}" "ipv6" || { echo "Failed to create floating IP for IPv6 instance"; exit 1; }
       
       # Save checkpoint after floating IP is created
@@ -3707,10 +3854,29 @@ deploy() {
       # Save checkpoint after instances are created
       save_deployment_state $STAGE_SERVERS_CREATED "All instances created successfully"
       
-      # Create floating IPs for each instance
+      # CRITICAL FIX: Create floating IPs for each instance with deliberate delays between operations
+      log "Creating floating IPs with sufficient delays between operations to avoid API rate limits..." "INFO"
+      
+      # Create primary IP
+      log "Creating floating IP for primary instance (EWR)..." "INFO"
       create_floating_ip "$(cat ewr-ipv4-bgp-primary-1c1g_id.txt)" "${IPV4_REGIONS[0]}" "ipv4" || { echo "Failed to create floating IP for primary instance"; exit 1; }
+      log "Waiting 180 seconds before creating next IP to avoid API limits..." "INFO"
+      sleep 180
+      
+      # Create secondary IP
+      log "Creating floating IP for secondary instance (MIA)..." "INFO"
       create_floating_ip "$(cat mia-ipv4-bgp-secondary-1c1g_id.txt)" "${IPV4_REGIONS[1]}" "ipv4" || { echo "Failed to create floating IP for secondary instance"; exit 1; }
+      log "Waiting 180 seconds before creating next IP to avoid API limits..." "INFO"
+      sleep 180
+      
+      # Create tertiary IP
+      log "Creating floating IP for tertiary instance (ORD)..." "INFO"
       create_floating_ip "$(cat ord-ipv4-bgp-tertiary-1c1g_id.txt)" "${IPV4_REGIONS[2]}" "ipv4" || { echo "Failed to create floating IP for tertiary instance"; exit 1; }
+      log "Waiting 180 seconds before creating next IP to avoid API limits..." "INFO"
+      sleep 180
+      
+      # Create IPv6 IP
+      log "Creating floating IP for IPv6 instance (LAX)..." "INFO"
       create_floating_ip "$(cat lax-ipv6-bgp-1c1g_id.txt)" "${IPV6_REGION}" "ipv6" || { echo "Failed to create floating IP for IPv6 instance"; exit 1; }
       
       # Save checkpoint after floating IPs are created
@@ -4602,14 +4768,32 @@ handle_ip_quota_issue() {
   log "Running special function to handle Vultr IP quota issues..." "WARN"
   log "This will try more aggressive cleanup options to recover from quota limits" "WARN"
   
-  # First, try standard cleanup
-  log "Step 1: Cleaning up ALL reserved IPs (including attached ones)..." "INFO"
-  cleanup_reserved_ips "true"
+  # First, check if we already have any IPs in the account
+  log "Step 1: Checking current IP quota status..." "INFO"
+  local initial_ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}")
   
-  # Wait a significant time for Vultr to process
-  log "Waiting 2 minutes for Vultr to fully process IP deletions..." "INFO"
-  log "This longer wait may help with 'recently deleted' IPs that still count against quota" "INFO"
-  sleep 120
+  local initial_count=0
+  if [[ "$initial_ips" == *"id"* ]]; then
+    initial_count=$(echo "$initial_ips" | grep -c '"id"')
+  fi
+  
+  log "Current reserved IP count: $initial_count" "INFO"
+  
+  # Try standard cleanup if we have IPs
+  if [ $initial_count -gt 0 ]; then
+    log "Step 2: Cleaning up ALL reserved IPs (including attached ones)..." "INFO"
+    cleanup_reserved_ips "true"
+    
+    # Wait a significant time for Vultr to process
+    log "Waiting 3 minutes for Vultr to fully process IP deletions..." "INFO"
+    log "This longer wait may help with 'recently deleted' IPs that still count against quota" "INFO"
+    sleep 180
+  else
+    log "No IPs found in your account. The issue is likely with Vultr's API rate limits." "INFO"
+    log "Waiting 5 minutes to allow API rate limits to reset..." "INFO"
+    sleep 300
+  fi
   
   # Check if we still have IPs in the account
   local current_ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
@@ -4620,10 +4804,58 @@ handle_ip_quota_issue() {
     total_count=$(echo "$current_ips" | grep -c '"id"')
   fi
   
-  log "After deep cleanup: Found $total_count reserved IPs in your account" "INFO"
+  log "After cleanup: Found $total_count reserved IPs in your account" "INFO"
+  
+  # Second-level cleanup: try to force delete each IP individually
+  if [ $total_count -gt 0 ]; then
+    log "Step 3: Using force-delete on each remaining IP individually..." "INFO"
+    
+    # Extract all IP IDs
+    ip_ids=($(echo "$current_ips" | grep -o '"id":"[^"]*"' | cut -d'"' -f4))
+    
+    for ip_id in "${ip_ids[@]}"; do
+      log "Force deleting IP with ID: $ip_id" "INFO"
+      
+      # Try to detach first if it's attached
+      log "Attempting to detach IP $ip_id if it's attached..." "INFO"
+      curl -s -X POST "${VULTR_API_ENDPOINT}reserved-ips/$ip_id/detach" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}" > /dev/null
+      
+      # Give it time to process the detach operation
+      sleep 5
+      
+      # Now try to delete
+      response=$(curl -s -X DELETE "${VULTR_API_ENDPOINT}reserved-ips/$ip_id" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}")
+      
+      if [ -z "$response" ]; then
+        log "Successfully requested deletion of IP $ip_id" "INFO"
+      else
+        log "Error deleting IP $ip_id: $response" "WARN"
+      fi
+      
+      # Add delay between operations
+      sleep 10
+    done
+    
+    # Wait even longer after individual deletions
+    log "Waiting 5 minutes for Vultr to fully process all IP deletions..." "INFO"
+    sleep 300
+    
+    # Check again
+    current_ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+      -H "Authorization: Bearer ${VULTR_API_KEY}")
+    
+    total_count=0
+    if [[ "$current_ips" == *"id"* ]]; then
+      total_count=$(echo "$current_ips" | grep -c '"id"')
+    fi
+    
+    log "After aggressive cleanup: Found $total_count reserved IPs in your account" "INFO"
+  fi
   
   if [ $total_count -gt 0 ]; then
-    log "WARNING: You still have $total_count reserved IPs after deep cleanup" "WARN"
+    log "WARNING: You still have $total_count reserved IPs after aggressive cleanup" "WARN"
     log "These might be in a 'recently deleted' state that still count against quotas" "WARN"
     log "Options:" "INFO"
     log "  1. Wait 24-48 hours for Vultr to fully release the IPs" "INFO"
@@ -4638,6 +4870,7 @@ handle_ip_quota_issue() {
   else
     log "Successfully cleaned up all reserved IPs" "INFO"
     log "You should now be able to continue with deployment" "INFO"
+    log "If you still encounter API rate limits, wait 15-30 minutes before trying again" "INFO"
     return 0
   fi
 }
