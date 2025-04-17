@@ -272,22 +272,32 @@ detect_deployment_stage() {
   local instances_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances" \
     -H "Authorization: Bearer ${VULTR_API_KEY}")
   
+  # Log the instances response for debugging
+  log "Debug: Found instances response: ${instances_response:0:100}..." "DEBUG"
+  
   # Build instance patterns dynamically from region variables
   local primary_pattern="${IPV4_REGION_PRIMARY}-ipv4-bgp-primary"
   local secondary_pattern="${IPV4_REGION_SECONDARY}-ipv4-bgp-secondary"
   local tertiary_pattern="${IPV4_REGION_TERTIARY}-ipv4-bgp-tertiary"
   local ipv6_pattern="${IPV6_REGION}-ipv6-bgp"
   
-  if echo "$instances_response" | grep -q "\"label\":\"$primary_pattern"; then
+  log "Debug: Looking for instances with patterns: $primary_pattern, $secondary_pattern, $tertiary_pattern, $ipv6_pattern" "DEBUG"
+  
+  # More flexible matching to account for different API response formats
+  if [[ "$instances_response" == *"$primary_pattern"* ]]; then
+    log "Debug: Found primary instance pattern: $primary_pattern" "DEBUG"
     ipv4_count=$((ipv4_count + 1))
   fi
-  if echo "$instances_response" | grep -q "\"label\":\"$secondary_pattern"; then
+  if [[ "$instances_response" == *"$secondary_pattern"* ]]; then
+    log "Debug: Found secondary instance pattern: $secondary_pattern" "DEBUG"
     ipv4_count=$((ipv4_count + 1))
   fi
-  if echo "$instances_response" | grep -q "\"label\":\"$tertiary_pattern"; then
+  if [[ "$instances_response" == *"$tertiary_pattern"* ]]; then
+    log "Debug: Found tertiary instance pattern: $tertiary_pattern" "DEBUG"
     ipv4_count=$((ipv4_count + 1))
   fi
-  if echo "$instances_response" | grep -q "\"label\":\"$ipv6_pattern"; then
+  if [[ "$instances_response" == *"$ipv6_pattern"* ]]; then
+    log "Debug: Found IPv6 instance pattern: $ipv6_pattern" "DEBUG"
     ipv6_count=1
   fi
   
