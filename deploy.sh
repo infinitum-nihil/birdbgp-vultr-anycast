@@ -3425,11 +3425,41 @@ deploy() {
     # Completely fresh deployment, ignore any existing state
     log "Force-fresh mode active: Creating instances directly" "INFO"
     
-    # For force-fresh mode, skip all detection and create instances directly
-    log "Starting from stage $STAGE_INIT: Creating VMs for ${IP_STACK_MODE} stack..." "INFO"
+    # For force-fresh mode, deploy according to selected IP stack mode directly
+    log "Starting from stage $STAGE_INIT: Creating VMs for ${IP_STACK_MODE:-dual} stack..." "INFO"
     
-    # Create VMs directly
-    create_instances
+    # Save initial checkpoint
+    save_deployment_state $STAGE_INIT "Deployment started - Fresh start (forced)"
+    
+    # Deploy according to selected IP stack mode directly
+    case "${IP_STACK_MODE:-dual}" in
+      ipv4)
+        log "Deploying IPv4-only BGP Anycast infrastructure..." "INFO"
+        
+        # Create IPv4 instances (3 servers as per documentation)
+        create_instance "${IPV4_REGIONS[0]}" "ewr-ipv4-bgp-primary-1c1g" "1" "false" || { echo "Failed to create primary instance"; exit 1; }
+        create_instance "${IPV4_REGIONS[1]}" "mia-ipv4-bgp-secondary-1c1g" "2" "false" || { echo "Failed to create secondary instance"; exit 1; }
+        create_instance "${IPV4_REGIONS[2]}" "ord-ipv4-bgp-tertiary-1c1g" "3" "false" || { echo "Failed to create tertiary instance"; exit 1; }
+        ;;
+      ipv6)
+        log "Deploying IPv6-only BGP Anycast infrastructure..." "INFO"
+        
+        # Create IPv6 instance
+        create_instance "${IPV6_REGION}" "lax-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
+        ;;
+      dual|*)
+        log "Deploying dual-stack BGP Anycast infrastructure..." "INFO"
+        
+        # Create all instances
+        create_instance "${IPV4_REGIONS[0]}" "ewr-ipv4-bgp-primary-1c1g" "1" "false" || { echo "Failed to create primary instance"; exit 1; }
+        create_instance "${IPV4_REGIONS[1]}" "mia-ipv4-bgp-secondary-1c1g" "2" "false" || { echo "Failed to create secondary instance"; exit 1; }
+        create_instance "${IPV4_REGIONS[2]}" "ord-ipv4-bgp-tertiary-1c1g" "3" "false" || { echo "Failed to create tertiary instance"; exit 1; }
+        create_instance "${IPV6_REGION}" "lax-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
+        ;;
+    esac
+    
+    # Save checkpoint after instances are created
+    save_deployment_state $STAGE_SERVERS_CREATED "Instances created successfully in force-fresh mode"
     
     # Exit early since we've already performed the actions
     log "Fresh deployment initiated successfully" "INFO"
