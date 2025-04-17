@@ -298,21 +298,22 @@ detect_deployment_stage() {
   
   log "Debug: Looking for instances with patterns: $primary_pattern, $secondary_pattern, $tertiary_pattern, $ipv6_pattern" "DEBUG"
   
-  # More flexible matching to account for different API response formats
-  if [[ "$instances_response" == *"$primary_pattern"* ]]; then
-    log "Debug: Found primary instance pattern: $primary_pattern" "DEBUG"
+  # Stricter matching to avoid false positives from other resources
+  # Look for label pattern in JSON format
+  if [[ "$instances_response" == *"\"label\":\"$primary_pattern"* ]]; then
+    log "Debug: Found primary instance with label: $primary_pattern" "DEBUG"
     ipv4_count=$((ipv4_count + 1))
   fi
-  if [[ "$instances_response" == *"$secondary_pattern"* ]]; then
-    log "Debug: Found secondary instance pattern: $secondary_pattern" "DEBUG"
+  if [[ "$instances_response" == *"\"label\":\"$secondary_pattern"* ]]; then
+    log "Debug: Found secondary instance with label: $secondary_pattern" "DEBUG"
     ipv4_count=$((ipv4_count + 1))
   fi
-  if [[ "$instances_response" == *"$tertiary_pattern"* ]]; then
-    log "Debug: Found tertiary instance pattern: $tertiary_pattern" "DEBUG"
+  if [[ "$instances_response" == *"\"label\":\"$tertiary_pattern"* ]]; then
+    log "Debug: Found tertiary instance with label: $tertiary_pattern" "DEBUG"
     ipv4_count=$((ipv4_count + 1))
   fi
-  if [[ "$instances_response" == *"$ipv6_pattern"* ]]; then
-    log "Debug: Found IPv6 instance pattern: $ipv6_pattern" "DEBUG"
+  if [[ "$instances_response" == *"\"label\":\"$ipv6_pattern"* ]]; then
+    log "Debug: Found IPv6 instance with label: $ipv6_pattern" "DEBUG"
     ipv6_count=1
   fi
   
