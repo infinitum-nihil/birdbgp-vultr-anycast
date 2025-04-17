@@ -278,8 +278,12 @@ detect_deployment_stage() {
   # For deploy-fresh, force a clean start regardless of what instances are found
   if [ "$1" = "force-init" ]; then
     log "Force initializing deployment stage to 0 (fresh start)" "INFO"
+    # Return 0 (success) not 0 (stage value)
+    echo "Explicitly returning 0 for STAGE_INIT" > /dev/stderr
     return 0
   fi
+  
+  log "FORCE_FRESH flag state: $FORCE_FRESH" "DEBUG"
   
   local stage=$STAGE_INIT
   local ipv4_count=0
@@ -3419,9 +3423,17 @@ deploy() {
   
   if [ "$force_fresh" = true ]; then
     # Completely fresh deployment, ignore any existing state
-    detect_deployment_stage "force-init"
-    current_stage=0
-    log "Force-fresh mode active: Starting from stage 0 (init)" "INFO"
+    log "Force-fresh mode active: Creating instances directly" "INFO"
+    
+    # For force-fresh mode, skip all detection and create instances directly
+    log "Starting from stage $STAGE_INIT: Creating VMs for ${IP_STACK_MODE} stack..." "INFO"
+    
+    # Create VMs directly
+    create_instances
+    
+    # Exit early since we've already performed the actions
+    log "Fresh deployment initiated successfully" "INFO"
+    return 0
   elif [ "$resume_mode" = true ]; then
     # First try to load state from file
     load_deployment_state
