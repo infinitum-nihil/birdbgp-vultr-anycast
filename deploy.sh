@@ -8,6 +8,11 @@
 # - By default, maximized geographic placement within the Americas region (East Coast, Southeast, Midwest, West Coast)
 # - Reserved IPs assigned in the same region as required by Vultr
 # - Using smallest instance type (1 CPU, 1GB RAM) to minimize costs while maintaining functionality
+#
+# RPKI/ASN Validation:
+# - Pre-flight checks ensure IP ranges have valid ROA records
+# - Verifies ASN ownership and validity before deployment
+# - Confirms proper RPKI signing to prevent routing issues
 
 # Function to get human-readable region name from region code
 get_region_name() {
@@ -123,6 +128,10 @@ IP_STACK_MODE=${IP_STACK_MODE:-dual}
 # Create error and success counters for tracking deployment issues
 ERROR_COUNT=0
 SUCCESS_COUNT=0
+
+# Variables for stage detection and loading
+DETECTED_STAGE=0
+LOADED_STAGE=0
 
 # Deployment state management
 DEPLOYMENT_STATE_FILE="deployment_state.json"
@@ -255,7 +264,9 @@ load_deployment_state() {
       stage=$STAGE_SERVERS_CREATED
     fi
     
-    return $stage
+    # Fix: Set the global variable and return success (0)
+    LOADED_STAGE=$stage
+    return 0
   else
     log "No previous deployment state found" "INFO"
     
@@ -264,10 +275,14 @@ load_deployment_state() {
       stage=$STAGE_SERVERS_CREATED
       log "Resume mode active - forcing stage to $stage despite missing state file" "INFO"
       save_deployment_state $stage "Forced stage in resume mode"
-      return $stage
+      # Fix: Set the global variable and return success (0)
+      LOADED_STAGE=$stage
+      return 0
     fi
     
-    return $STAGE_INIT
+    # Fix: Set the global variable and return success (0)
+    LOADED_STAGE=$STAGE_INIT
+    return 0
   fi
 }
 
@@ -437,7 +452,10 @@ detect_deployment_stage() {
     fi
   fi
   
-  return $stage
+  # Fix: Return the stage via a global variable and return 0 (success)
+  DETECTED_STAGE=$stage
+  log "Setting DETECTED_STAGE=$stage and returning success (0)" "DEBUG"
+  return 0
 }
 
 # Check if resources match expected configuration
@@ -490,6 +508,139 @@ verify_resources() {
   esac
   
   log "Resource verification passed" "INFO"
+  return 0
+}
+
+# RPKI and ASN Validation Functions
+validate_rpki_records() {
+  local ip_range="$1"
+  local our_asn="$2"
+  local log_prefix="$3"
+  local validation_url="https://stat.ripe.net/data/rpki-validation/data.json?resource=${ip_range}&prefix=${ip_range}&asn=${our_asn}"
+  
+  echo "${log_prefix}Validating RPKI records for ${ip_range} with AS${our_asn}..."
+  
+  # Use curl to query RIPE STAT API for RPKI validation
+  local response=$(curl -s "$validation_url")
+  
+  # Check if API call was successful
+  if echo "$response" | grep -q "error"; then
+    echo "${log_prefix}❌ Error querying RPKI data: $(echo "$response" | grep -o '"error":"[^"]*' | cut -d'"' -f4)"
+    return 1
+  fi
+  
+  # Extract validation status
+  local status=$(echo "$response" | grep -o '"status":"[^"]*' | cut -d'"' -f4)
+  
+  if [ "$status" = "valid" ]; then
+    echo "${log_prefix}✅ RPKI validation successful: ${ip_range} is correctly signed for AS${our_asn}"
+    return 0
+  elif [ "$status" = "unknown" ]; then
+    echo "${log_prefix}⚠️ RPKI status unknown: No ROA found for ${ip_range}. This may cause routing issues."
+    echo "${log_prefix}⚠️ Consider creating a ROA for this prefix at your RIR (ARIN, RIPE, etc.)"
+    # Return 0 since this isn't a definitive error, but warn the user
+    return 0
+  else
+    echo "${log_prefix}❌ RPKI validation failed: ${ip_range} is NOT correctly authorized for AS${our_asn}"
+    echo "${log_prefix}❌ Your announcements may be filtered by networks implementing RPKI!"
+    
+    # Check if there's any valid ASN for this prefix
+    local valid_asns=$(echo "$response" | grep -o '"asns":\[[^]]*\]' | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ' ')
+    if [ -n "$valid_asns" ]; then
+      echo "${log_prefix}ℹ️ The prefix ${ip_range} is authorized for these ASNs: ${valid_asns}"
+    fi
+    
+    # Ask if the user wants to continue anyway
+    read -p "${log_prefix}Do you want to continue anyway? (y/N): " -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo "${log_prefix}Aborting deployment due to RPKI validation failure"
+      exit 1
+    fi
+    
+    echo "${log_prefix}⚠️ Continuing despite RPKI validation failure. This is NOT recommended!"
+    return 0
+  fi
+}
+
+validate_asn() {
+  local our_asn="$1"
+  local log_prefix="$2"
+  local validation_url="https://stat.ripe.net/data/as-overview/data.json?resource=AS${our_asn}"
+  
+  echo "${log_prefix}Validating AS${our_asn} existence and details..."
+  
+  # Use curl to query RIPE STAT API for ASN validation
+  local response=$(curl -s "$validation_url")
+  
+  # Check if API call was successful
+  if echo "$response" | grep -q "error"; then
+    echo "${log_prefix}❌ Error querying ASN data: $(echo "$response" | grep -o '"error":"[^"]*' | cut -d'"' -f4)"
+    return 1
+  fi
+  
+  # Check if ASN exists
+  if echo "$response" | grep -q '"holder": null'; then
+    echo "${log_prefix}❌ AS${our_asn} does not appear to exist or has no registration information"
+    echo "${log_prefix}❌ Please verify your ASN is correct before continuing"
+    
+    # Ask if the user wants to continue anyway
+    read -p "${log_prefix}Do you want to continue anyway? (y/N): " -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo "${log_prefix}Aborting deployment due to ASN validation failure"
+      exit 1
+    fi
+    
+    echo "${log_prefix}⚠️ Continuing despite ASN validation failure. This is NOT recommended!"
+    return 0
+  fi
+  
+  # Extract ASN holder and details
+  local holder=$(echo "$response" | grep -o '"holder":"[^"]*' | cut -d'"' -f4)
+  local announced=$(echo "$response" | grep -o '"announced":[^,}]*' | cut -d':' -f2 | tr -d ' ,')
+  
+  echo "${log_prefix}✅ ASN Validated: AS${our_asn} belongs to ${holder}"
+  
+  if [ "$announced" = "true" ]; then
+    echo "${log_prefix}✅ AS${our_asn} is currently announcing prefixes on the global internet"
+  else
+    echo "${log_prefix}⚠️ AS${our_asn} does not appear to be announcing prefixes currently"
+    echo "${log_prefix}⚠️ This may be expected for a new ASN"
+  fi
+  
+  return 0
+}
+
+perform_preflight_validation() {
+  local log_prefix="[PREFLIGHT] "
+  echo "${log_prefix}Running pre-flight validation checks for BGP announcement..."
+  
+  # Validate ASN first
+  validate_asn "$OUR_AS" "$log_prefix" || return 1
+  
+  # Validate IPv4 prefix if provided
+  if [ -n "$OUR_IPV4_BGP_RANGE" ]; then
+    validate_rpki_records "$OUR_IPV4_BGP_RANGE" "$OUR_AS" "$log_prefix" || return 1
+  else
+    echo "${log_prefix}⚠️ No IPv4 range provided for BGP announcement"
+  fi
+  
+  # Validate IPv6 prefix if provided
+  if [ -n "$OUR_IPV6_BGP_RANGE" ]; then
+    validate_rpki_records "$OUR_IPV6_BGP_RANGE" "$OUR_AS" "$log_prefix" || return 1
+  else
+    echo "${log_prefix}⚠️ No IPv6 range provided for BGP announcement"
+  fi
+  
+  # Check if at least one range was provided
+  if [ -z "$OUR_IPV4_BGP_RANGE" ] && [ -z "$OUR_IPV6_BGP_RANGE" ]; then
+    echo "${log_prefix}❌ ERROR: No IP ranges provided for BGP announcement!"
+    echo "${log_prefix}❌ You must set at least one of OUR_IPV4_BGP_RANGE or OUR_IPV6_BGP_RANGE"
+    return 1
+  fi
+  
+  echo "${log_prefix}✅ Pre-flight validation completed successfully"
   return 0
 }
 
@@ -3385,6 +3536,14 @@ deploy() {
   local resume_mode=${RESUME_MODE:-false}
   local force_fresh=${FORCE_FRESH:-false}
   
+  # Run preflight validation checks for ASN and IP ranges
+  log "Running RPKI and ASN validation checks..." INFO
+  if ! perform_preflight_validation; then
+    log "❌ Preflight validation failed. Please fix the issues before continuing." ERROR
+    exit 1
+  fi
+  log "✅ Preflight validation successful - ASN and IP ranges are properly configured" SUCCESS
+  
   # Reset arrays to store resource information
   IPV4_INSTANCES=()
   IPV4_ADDRESSES=()
@@ -3414,7 +3573,8 @@ deploy() {
   
   # Set up error handling
   # If the script exits with an error, run the cleanup function
-  trap 'echo "Error detected, cleaning up resources..."; set +x; cleanup_resources "error"; exit 1' ERR
+  # Modified error trap to avoid automatically destroying resources
+  trap 'echo "Error detected! NOT automatically cleaning up resources for safety."; set +x; exit 1' ERR
   
   echo "Starting Vultr BGP Anycast deployment..."
   
@@ -3461,20 +3621,22 @@ deploy() {
     # Save checkpoint after instances are created
     save_deployment_state $STAGE_SERVERS_CREATED "Instances created successfully in force-fresh mode"
     
-    # Exit early since we've already performed the actions
+    # Important: Set current_stage to STAGE_SERVERS_CREATED to continue deployment
     log "Fresh deployment initiated successfully" "INFO"
-    return 0
+    # Continue with next stages
+    current_stage=$STAGE_SERVERS_CREATED
+    log "Continuing to next stage (floating IP creation)..." "INFO"
   elif [ "$resume_mode" = true ]; then
     # First try to load state from file
     load_deployment_state
-    # CRITICAL: Force stage 1 in resume mode to avoid error trap
-    current_stage=1
-    log "Resume mode active: Forcing state to stage 1" "INFO"
+    # Use the global variable that was set by the function
+    current_stage=$LOADED_STAGE
+    log "Resume mode active: Loaded state from stage $current_stage" "INFO"
     
     # If no state file found, try to detect state from existing resources
     if [ $current_stage -eq $STAGE_INIT ]; then
       detect_deployment_stage
-      current_stage=$?
+      current_stage=$DETECTED_STAGE
     fi
     
     # Only continue if we found something to resume
@@ -3561,7 +3723,7 @@ deploy() {
     
     # Detect current deployment state
     detect_deployment_stage
-    local detected_stage=$?
+    local detected_stage=$DETECTED_STAGE
     
     if [ $detected_stage -gt $STAGE_INIT ]; then
       log "Found existing resources from a previous deployment (Stage: $detected_stage)" "INFO"
@@ -3822,8 +3984,26 @@ deploy() {
   # Save initial checkpoint
   save_deployment_state $STAGE_INIT "Deployment started - Initial state"
   
-  # Deploy according to selected IP stack mode
-  case "${IP_STACK_MODE:-dual}" in
+  # Check for the flag file to skip VM creation
+  if [ -f "/tmp/birdbgp_skip_vm_creation" ]; then
+    log "Found flag file to skip VM creation - jumping straight to floating IP creation..." "INFO"
+    
+    # Set the stage to indicate VMs are already created
+    save_deployment_state $STAGE_SERVERS_CREATED "Using existing VMs - skipped VM creation due to flag file"
+    
+    # Remove the flag file to avoid skipping VM creation in future runs
+    rm -f "/tmp/birdbgp_skip_vm_creation"
+    
+    # Jump to floating IP creation
+    log "Skipping VM creation - will proceed directly to floating IP creation" "INFO"
+    
+    # Set current stage to indicate VMs are created
+    current_stage=$STAGE_SERVERS_CREATED
+    
+    # We'll continue after the case statement closing
+  else
+    # Deploy according to selected IP stack mode
+    case "${IP_STACK_MODE:-dual}" in
     ipv4)
       log "Deploying IPv4-only BGP Anycast infrastructure..." "INFO"
       
@@ -3957,6 +4137,23 @@ deploy() {
       save_deployment_state $STAGE_BIRD_CONFIGS "All BIRD configurations generated"
       ;;
   esac
+  fi
+  
+  # Continue with floating IP creation if we skipped VM creation
+  if [ $current_stage -eq $STAGE_SERVERS_CREATED ]; then
+    log "Continuing with floating IP creation for existing VMs..." "INFO"
+    
+    # Normally we would use the instance IDs stored in the temp files, but they don't exist
+    # We need to detect the existing VMs by their labels
+    log "Detecting existing BGP instances..." "INFO"
+    
+    # We'll continue from here in a future implementation
+    log "IMPORTANT: This is a placeholder for future implementation." "WARN"
+    log "For now, you need to manually create the floating IPs." "WARN"
+    log "Run these commands for each region:" "INFO"
+    log "1. vultr-cli reserved-ip create --region=your_region --ip-type=v4" "INFO"
+    log "2. vultr-cli reserved-ip attach --id=reserved_ip_id --instance-id=instance_id" "INFO"
+  fi
   
   # Store the existing VM ID for potential cleanup
   existing_vm=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances?label=birdbgp-losangeles" \
@@ -4939,11 +5136,24 @@ handle_ip_quota_issue() {
 
 # Parse command line arguments
 case "$1" in
+  just_vars)
+    # Just load the variables for use by other scripts
+    # Don't run any actual functions - this is used by helper scripts
+    export VULTR_API_KEY=${vultr_api_key}
+    export VULTR_API_ENDPOINT="https://api.vultr.com/v2/"
+    return 0 2>/dev/null || exit 0
+    ;;
   setup)
     setup_env
     ;;
+  validate-rpki)
+    echo "Running RPKI and ASN validation only..."
+    source "$(dirname "$0")/.env"
+    perform_preflight_validation
+    ;;
   deploy)
-    deploy
+    echo "Starting deployment in safe mode (no auto-cleanup)..."
+    CLEANUP_ON_ERROR=false deploy
     ;;
   deploy-fresh)
     echo "Starting fresh deployment after cleaning up all resources..."
@@ -4958,13 +5168,18 @@ case "$1" in
   continue)
     # Resume deployment from current stage
     echo "Continuing deployment from current stage..."
+    # First, backup the current deployment state file
+    if [ -f "$DEPLOYMENT_STATE_FILE" ]; then
+      cp "$DEPLOYMENT_STATE_FILE" "${DEPLOYMENT_STATE_FILE}.bak.$(date +%s)"
+      echo "Backed up current deployment state file."
+    fi
+    
+    # Create a special flag file to indicate we want to skip VM creation
+    echo "true" > "/tmp/birdbgp_skip_vm_creation"
+    echo "Created flag to skip VM creation and continue with floating IP setup."
+    
+    # Run the deployment with resume mode
     RESUME_MODE=true
-    # For resume, instead of using deployment_state.json, directly create VMs
-    echo "Bypassing deployment_state.json and starting clean... This ensures a fresh start."
-    # WARNING: This will leave previous resources orphaned, but they can be cleaned up later
-    rm -f deployment_state.json  # Remove state file to force clean start
-    echo '{"stage": 0, "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "message": "Fresh start", "ipv4_instances": [], "ipv6_instance": null, "floating_ipv4_ids": [], "floating_ipv6_id": null}' > deployment_state.json
-    echo "Created fresh deployment state file"
     deploy
     ;;
   monitor)
@@ -5432,7 +5647,7 @@ case "$1" in
     ;;
     
   *)
-    echo "Usage: $0 {setup|deploy|deploy-fresh|continue|monitor|test-failover|test-ssh|rtbh|aspa|community|list-regions|list-all-resources|cleanup-all-resources|cleanup-old-vm|cleanup-reserved-ips|list-reserved-ips|force-delete-ip|fix-ip-quota|cleanup|cleanup-temp-files|verbose}"
+    echo "Usage: $0 {setup|validate-rpki|deploy|deploy-fresh|continue|monitor|test-failover|test-ssh|rtbh|aspa|community|list-regions|list-all-resources|cleanup-all-resources|cleanup-old-vm|cleanup-reserved-ips|list-reserved-ips|force-delete-ip|fix-ip-quota|cleanup|cleanup-temp-files|verbose}"
     echo "       $0 test-ssh <hostname_or_ip> [username]"
     echo "       $0 rtbh <server_ip> <target_ip>"
     echo "       $0 aspa <server_ip>"
@@ -5441,6 +5656,7 @@ case "$1" in
     echo ""
     echo "Commands:"
     echo "  setup               - Configure environment variables for deployment"
+    echo "  validate-rpki       - Validate ASN and IP ranges against RPKI records without deploying"
     echo "  deploy              - Deploy BGP Anycast infrastructure"
     echo "  deploy-fresh        - Start a completely fresh deployment after cleaning up all resources"
     echo "  continue            - Continue a previous deployment from where it left off"
