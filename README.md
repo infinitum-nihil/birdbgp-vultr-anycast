@@ -41,13 +41,13 @@ SSH_KEY_PATH=/absolute/path/to/your/ssh/private_key
 The script can automatically upload your SSH key to Vultr during deployment if it doesn't already exist in your Vultr account.
 
 ## Deployment Architecture
-- **Dual-Stack BGP Servers**: 4 servers in different US locations with tiered failover
-  - Primary: Newark (ewr) - No path prepending (highest priority)
-  - Secondary: Miami (mia) - 1x path prepending (medium priority)
-  - Tertiary: Chicago (ord) - 2x path prepending (lowest priority)
-  - Los Angeles (lax) - 2x path prepending (lowest priority)
-  
-All servers are configured with dual-stack BGP and announce both IPv4 and IPv6 prefixes with consistent path prepending hierarchy.
+- **Dual-Stack BGP Servers**: 4 servers with tiered failover (regions configurable)
+  - Primary: No path prepending (highest priority)
+  - Secondary: 1x path prepending (medium priority) 
+  - Tertiary: 2x path prepending (lowest priority)
+  - Quaternary: 2x path prepending (lowest priority)
+
+All servers are configured with dual-stack BGP and announce both IPv4 and IPv6 prefixes with a consistent path prepending hierarchy. You can deploy these servers in any Vultr regions worldwide by configuring the region codes in your `.env` file, allowing for global anycast distribution tailored to your needs.
 
 ## Usage
 
