@@ -4,13 +4,14 @@
 This project automates the deployment of a secure BGP Anycast infrastructure on Vultr, providing high availability across multiple geographic locations with automatic failover.
 
 Key features:
-- Automated infrastructure deployment across multiple US regions
+- Automated infrastructure deployment across any global regions
+- Configurable region-agnostic BGP hierarchy with role reassignment
 - RPKI validation with ARIN TAL prioritization
 - ASPA path validation for enhanced security
 - Comprehensive security hardening (iptables, CrowdSec, Fail2ban)
 - Routinator built from source with ASPA support
 - Path prepending for controlled failover
-- IPv4 and IPv6 BGP announcement
+- Dual-stack IPv4 and IPv6 BGP announcement
 - Remote Triggered Black Hole (RTBH) for DDoS mitigation
 
 ## Prerequisites
@@ -29,6 +30,7 @@ nano .env  # Edit with your actual values
 
 Required variables:
 ```
+# API and BGP credentials
 VULTR_API_KEY=your_api_key_here
 VULTR_API_ENDPOINT=https://api.vultr.com/v2/
 OUR_AS=your_asn
@@ -36,6 +38,12 @@ OUR_IPV4_BGP_RANGE=your_ipv4_range
 OUR_IPV6_BGP_RANGE=your_ipv6_range
 VULTR_BGP_PASSWORD=your_bgp_password
 SSH_KEY_PATH=/absolute/path/to/your/ssh/private_key
+
+# Region configuration - each role can be assigned to any valid Vultr region
+BGP_REGION_PRIMARY=ewr     # Primary region (no path prepending)
+BGP_REGION_SECONDARY=mia   # Secondary region (1x path prepending)
+BGP_REGION_TERTIARY=ord    # Tertiary region (2x path prepending)
+BGP_REGION_QUATERNARY=lax  # Quaternary region (2x path prepending)
 ```
 
 The script can automatically upload your SSH key to Vultr during deployment if it doesn't already exist in your Vultr account.
@@ -70,16 +78,33 @@ This will:
 
 For a quick status check of all BGP servers:
 ```bash
-./check_bgp_status_2.sh
+./check_bgp_status.sh
 ```
 
 These commands provide detailed monitoring of:
-- Server status
+- Server status with role and region information
 - BGP session state for IPv4 and IPv6
 - RPKI validation status
+- Path prepending configuration verification
 - Routinator operation
 - Security service status
-- Path prepending verification
+
+### Reassigning Server Roles
+To change which server acts as primary, secondary, tertiary, or quaternary:
+```bash
+./reassign_bgp_roles.sh --primary <region> --secondary <region> --tertiary <region> --quaternary <region>
+```
+
+For example, to make LAX the primary server:
+```bash
+./reassign_bgp_roles.sh --primary lax --secondary ewr --tertiary mia --quaternary ord
+```
+
+This will:
+1. Update your .env file with the new role assignments
+2. Reconfigure BIRD on all affected servers
+3. Update path prepending to match new roles
+4. Maintain dual-stack IPv4+IPv6 BGP announcements
 
 ### Testing Failover
 ```bash
@@ -164,8 +189,12 @@ Detailed documentation is available in the "support docs" directory:
 
 ## Additional Scripts
 
+### BGP Role Management
+- `reassign_bgp_roles.sh` - Change which server is primary/secondary/tertiary/quaternary
+- `check_bgp_status.sh` - Region-agnostic status check with role and prepending info
+- `check_bgp_status_updated.sh` - Alternative status check with enhanced output
+
 ### Dual-Stack BGP Management
-- `check_bgp_status_2.sh` - Check status of all IPv4 and IPv6 BGP sessions
 - `bgp_summary.sh` - Display a comprehensive BGP status summary
 - `add_ipv6_to_servers.sh` - Add IPv6 connectivity to IPv4-only servers
 - `add_ipv6_path_prepending.sh` - Add path prepending to IPv6 BGP sessions
