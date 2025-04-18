@@ -31,43 +31,49 @@ fi
 # Set quaternary region if not defined
 BGP_REGION_QUATERNARY=${BGP_REGION_QUATERNARY:-$BGP_REGION_TERTIARY}
 
-# Set the IPs based on the region information from .env
-get_server_ip() {
-  local region=$1
-  local role=$2
-  
-  # Try multiple possible file patterns
-  local patterns=(
-    "${region}-ipv4-bgp-${role}-1c1g_ipv4.txt"
-    "${region}-dual-bgp-${role}-1c1g_ipv4.txt"
-  )
-  
-  # Special case for quaternary which might be an IPv6 node in older setups
-  if [ "$role" = "quaternary" ]; then
-    patterns+=("${region}-ipv6-bgp-1c1g_ipv4.txt")
-  fi
-  
-  # Try each pattern
-  for pattern in "${patterns[@]}"; do
-    local file_path="$(dirname "$0")/$pattern"
-    if [ -f "$file_path" ]; then
-      cat "$file_path"
-      return 0
-    fi
-  done
-  
-  # If no file found, check deployment_state.json as fallback
-  if [ -f "$(dirname "$0")/deployment_state.json" ]; then
-    grep -A 2 "\"region\": \"$region\"" "$(dirname "$0")/deployment_state.json" | grep "main_ip" | head -1 | awk -F'"' '{print $4}'
-  else
-    echo ""
-  fi
-}
+# Lookup IPs based on roles, not region names
+# This is necessary for compatibility with the original file naming
 
-PRIMARY_IP=$(get_server_ip "$BGP_REGION_PRIMARY" "primary")
-SECONDARY_IP=$(get_server_ip "$BGP_REGION_SECONDARY" "secondary")
-TERTIARY_IP=$(get_server_ip "$BGP_REGION_TERTIARY" "tertiary")
-QUATERNARY_IP=$(get_server_ip "$BGP_REGION_QUATERNARY" "quaternary")
+# For compatibility with original deployment
+if [ "$BGP_REGION_PRIMARY" = "lax" ]; then
+  PRIMARY_IP=$(cat "$(dirname "$0")/lax-ipv6-bgp-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_PRIMARY" = "ewr" ]; then
+  PRIMARY_IP=$(cat "$(dirname "$0")/ewr-ipv4-bgp-primary-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_PRIMARY" = "mia" ]; then
+  PRIMARY_IP=$(cat "$(dirname "$0")/mia-ipv4-bgp-secondary-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_PRIMARY" = "ord" ]; then
+  PRIMARY_IP=$(cat "$(dirname "$0")/ord-ipv4-bgp-tertiary-1c1g_ipv4.txt" 2>/dev/null)
+fi
+
+if [ "$BGP_REGION_SECONDARY" = "lax" ]; then
+  SECONDARY_IP=$(cat "$(dirname "$0")/lax-ipv6-bgp-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_SECONDARY" = "ewr" ]; then
+  SECONDARY_IP=$(cat "$(dirname "$0")/ewr-ipv4-bgp-primary-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_SECONDARY" = "mia" ]; then
+  SECONDARY_IP=$(cat "$(dirname "$0")/mia-ipv4-bgp-secondary-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_SECONDARY" = "ord" ]; then
+  SECONDARY_IP=$(cat "$(dirname "$0")/ord-ipv4-bgp-tertiary-1c1g_ipv4.txt" 2>/dev/null)
+fi
+
+if [ "$BGP_REGION_TERTIARY" = "lax" ]; then
+  TERTIARY_IP=$(cat "$(dirname "$0")/lax-ipv6-bgp-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_TERTIARY" = "ewr" ]; then
+  TERTIARY_IP=$(cat "$(dirname "$0")/ewr-ipv4-bgp-primary-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_TERTIARY" = "mia" ]; then
+  TERTIARY_IP=$(cat "$(dirname "$0")/mia-ipv4-bgp-secondary-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_TERTIARY" = "ord" ]; then
+  TERTIARY_IP=$(cat "$(dirname "$0")/ord-ipv4-bgp-tertiary-1c1g_ipv4.txt" 2>/dev/null)
+fi
+
+if [ "$BGP_REGION_QUATERNARY" = "lax" ]; then
+  QUATERNARY_IP=$(cat "$(dirname "$0")/lax-ipv6-bgp-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_QUATERNARY" = "ewr" ]; then
+  QUATERNARY_IP=$(cat "$(dirname "$0")/ewr-ipv4-bgp-primary-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_QUATERNARY" = "mia" ]; then
+  QUATERNARY_IP=$(cat "$(dirname "$0")/mia-ipv4-bgp-secondary-1c1g_ipv4.txt" 2>/dev/null)
+elif [ "$BGP_REGION_QUATERNARY" = "ord" ]; then
+  QUATERNARY_IP=$(cat "$(dirname "$0")/ord-ipv4-bgp-tertiary-1c1g_ipv4.txt" 2>/dev/null)
+fi
 
 # Check if IPs were found
 if [ -z "$PRIMARY_IP" ] || [ -z "$SECONDARY_IP" ] || [ -z "$TERTIARY_IP" ] || [ -z "$QUATERNARY_IP" ]; then

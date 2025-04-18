@@ -24,6 +24,7 @@ usage() {
   echo "  -s, --secondary [REGION]   Set the region to be secondary (1x path prepending)"
   echo "  -t, --tertiary [REGION]    Set the region to be tertiary (2x path prepending)"
   echo "  -q, --quaternary [REGION]  Set the region to be quaternary (2x path prepending)"
+  echo "  -y, --yes                  Auto-confirm changes without prompting"
   echo "  -h, --help                 Show this help message"
   echo ""
   echo -e "${BOLD}EXAMPLE:${RESET}"
@@ -39,6 +40,7 @@ PRIMARY=""
 SECONDARY=""
 TERTIARY=""
 QUATERNARY=""
+AUTO_CONFIRM=false
 
 while [[ "$#" -gt 0 ]]; do
   case $1 in
@@ -46,6 +48,7 @@ while [[ "$#" -gt 0 ]]; do
     -s|--secondary) SECONDARY="$2"; shift ;;
     -t|--tertiary) TERTIARY="$2"; shift ;;
     -q|--quaternary) QUATERNARY="$2"; shift ;;
+    -y|--yes) AUTO_CONFIRM=true ;;
     -h|--help) usage ;;
     *) echo "Unknown parameter: $1"; usage ;;
   esac
@@ -94,10 +97,12 @@ echo "Quaternary (2x prepend): ${QUATERNARY}"
 echo ""
 
 # Confirmation
-read -p "Do you want to apply these changes? (y/n): " confirm
-if [[ "$confirm" != "y" ]]; then
-  echo "Operation cancelled."
-  exit 0
+if [ "$AUTO_CONFIRM" != "true" ]; then
+  read -p "Do you want to apply these changes? (y/n): " confirm
+  if [[ "$confirm" != "y" && "$confirm" != "Y" && "$confirm" != "yes" && "$confirm" != "Yes" && "$confirm" != "YES" ]]; then
+    echo "Operation cancelled."
+    exit 0
+  fi
 fi
 
 # Update .env file with new regions
@@ -183,7 +188,7 @@ PREPENDS_TO_UPDATE=()
 
 # For each region, check if its role has changed
 for region in $PRIMARY $SECONDARY $TERTIARY $QUATERNARY; do
-  local old_prepend=-1
+  old_prepend=-1
   
   # Determine the old prepend count
   if [ "$region" = "$BGP_REGION_PRIMARY" ]; then
