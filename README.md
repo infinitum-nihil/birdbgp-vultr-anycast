@@ -41,11 +41,13 @@ SSH_KEY_PATH=/absolute/path/to/your/ssh/private_key
 The script can automatically upload your SSH key to Vultr during deployment if it doesn't already exist in your Vultr account.
 
 ## Deployment Architecture
-- **IPv4 Servers**: 3 servers in different US locations with tiered failover
-  - Primary: Newark (ewr)
-  - Secondary: Miami (mia) - 1x path prepend
-  - Tertiary: Chicago (ord) - 2x path prepend
-- **IPv6 Server**: Los Angeles (lax)
+- **Dual-Stack BGP Servers**: 4 servers in different US locations with tiered failover
+  - Primary: Newark (ewr) - No path prepending (highest priority)
+  - Secondary: Miami (mia) - 1x path prepending (medium priority)
+  - Tertiary: Chicago (ord) - 2x path prepending (lowest priority)
+  - Los Angeles (lax) - 2x path prepending (lowest priority)
+  
+All servers are configured with dual-stack BGP and announce both IPv4 and IPv6 prefixes with consistent path prepending hierarchy.
 
 ## Usage
 
@@ -57,7 +59,7 @@ This will:
 1. Check for existing conflicting VMs
 2. Deploy all servers in the specified regions
 3. Configure Routinator with ASPA support
-4. Set up BIRD 2.0 with RPKI/ASPA validation
+4. Set up BIRD 2.16.2 with RPKI/ASPA validation
 5. Apply comprehensive security hardening
 6. Establish BGP sessions and announce your prefixes
 
@@ -65,12 +67,19 @@ This will:
 ```bash
 ./deploy.sh monitor
 ```
-This command provides detailed monitoring of:
+
+For a quick status check of all BGP servers:
+```bash
+./check_bgp_status_2.sh
+```
+
+These commands provide detailed monitoring of:
 - Server status
-- BGP session state
+- BGP session state for IPv4 and IPv6
 - RPKI validation status
 - Routinator operation
 - Security service status
+- Path prepending verification
 
 ### Testing Failover
 ```bash
@@ -152,6 +161,23 @@ Detailed documentation is available in the "support docs" directory:
 - `security.md` - Security architecture
 - `bgp-communities.md` - Available BGP communities
 - `rpki-setup.md` - RPKI validation setup
+
+## Additional Scripts
+
+### Dual-Stack BGP Management
+- `check_bgp_status_2.sh` - Check status of all IPv4 and IPv6 BGP sessions
+- `bgp_summary.sh` - Display a comprehensive BGP status summary
+- `add_ipv6_to_servers.sh` - Add IPv6 connectivity to IPv4-only servers
+- `add_ipv6_path_prepending.sh` - Add path prepending to IPv6 BGP sessions
+
+### BIRD Management
+- `upgrade_bird.sh` - Upgrade BIRD to version 2.16.2 on a server
+- `upgrade_all_servers.sh` - Upgrade all servers to BIRD 2.16.2 with dual-stack
+- `fix_ipv6_bgp.sh` - Fix IPv6 BGP configuration issues
+- `test_dualstack_bird.sh` - Test dual-stack BGP functionality
+
+### Deployment Tools
+- `update_deploy_for_dualstack.sh` - Update deploy.sh with dual-stack support
 
 ## License
 Copyright (c) 2025. All rights reserved.
