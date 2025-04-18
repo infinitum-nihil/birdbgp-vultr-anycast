@@ -524,18 +524,41 @@ validate_rpki_records() {
   local response=$(curl -s "$validation_url")
   
   # Check if API call was successful
-  if echo "$response" | grep -q "error"; then
-    echo "${log_prefix}❌ Error querying RPKI data: $(echo "$response" | grep -o '"error":"[^"]*' | cut -d'"' -f4)"
-    return 1
+  if [ -z "$response" ] || echo "$response" | grep -q "error"; then
+    echo "${log_prefix}❌ Error querying RPKI data: $(echo "$response" | grep -o '"error":"[^"]*' | cut -d'"' -f4 || echo "Empty response")"
+    
+    # Fallback to RPKI Validator API (alternative source)
+    local alt_url="https://rpki-validator.ripe.net/api/v1/validity/${our_asn}/${ip_range}"
+    response=$(curl -s "$alt_url")
+    
+    if [ -z "$response" ] || echo "$response" | grep -q "error"; then
+      echo "${log_prefix}❌ Error querying alternative RPKI data source"
+      return 1
+    fi
+    
+    # Alternative API response format is different
+    # Format: {"validated_route":{"route":{"origin_asn":"ASx","prefix":"y.y.y.y/z"},"validity":{"state":"valid|invalid|unknown"}}}
+    local status=$(echo "$response" | grep -o '"state":"[^"]*' | cut -d'"' -f4)
+  else
+    # Extract validation status from RIPE STAT API
+    local status=$(echo "$response" | grep -o '"status":"[^"]*' | cut -d'"' -f4)
+    
+    # If status is empty, try different JSON path
+    if [ -z "$status" ]; then
+      status=$(echo "$response" | grep -o '"validity":\s*{\s*"state":\s*"[^"]*' | grep -o '"state":\s*"[^"]*' | cut -d'"' -f4)
+    fi
   fi
   
-  # Extract validation status
-  local status=$(echo "$response" | grep -o '"status":"[^"]*' | cut -d'"' -f4)
-  
-  if [ "$status" = "valid" ]; then
+  # Handle the validation status from either API
+  if [ -z "$status" ]; then
+    echo "${log_prefix}⚠️ RPKI status could not be determined. Unable to parse API response."
+    echo "${log_prefix}⚠️ Consider manually checking RPKI status with your RIR (ARIN, RIPE, etc.)"
+    # Return 0 and let the user decide
+    return 0
+  elif [[ "$status" = "valid" || "$status" = "Valid" ]]; then
     echo "${log_prefix}✅ RPKI validation successful: ${ip_range} is correctly signed for AS${our_asn}"
     return 0
-  elif [ "$status" = "unknown" ]; then
+  elif [[ "$status" = "unknown" || "$status" = "Unknown" || "$status" = "NotFound" ]]; then
     echo "${log_prefix}⚠️ RPKI status unknown: No ROA found for ${ip_range}. This may cause routing issues."
     echo "${log_prefix}⚠️ Consider creating a ROA for this prefix at your RIR (ARIN, RIPE, etc.)"
     # Return 0 since this isn't a definitive error, but warn the user
@@ -598,16 +621,8 @@ validate_asn() {
   
   # Extract ASN holder and details
   local holder=$(echo "$response" | grep -o '"holder":"[^"]*' | cut -d'"' -f4)
-  local announced=$(echo "$response" | grep -o '"announced":[^,}]*' | cut -d':' -f2 | tr -d ' ,')
   
   echo "${log_prefix}✅ ASN Validated: AS${our_asn} belongs to ${holder}"
-  
-  if [ "$announced" = "true" ]; then
-    echo "${log_prefix}✅ AS${our_asn} is currently announcing prefixes on the global internet"
-  else
-    echo "${log_prefix}⚠️ AS${our_asn} does not appear to be announcing prefixes currently"
-    echo "${log_prefix}⚠️ This may be expected for a new ASN"
-  fi
   
   return 0
 }
