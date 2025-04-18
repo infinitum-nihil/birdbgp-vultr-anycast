@@ -6,24 +6,31 @@ source "$(dirname "$0")/.env"
 
 echo "Getting BGP instance information..."
 
-# Set the IPs directly based on the ID files we know exist
-EWR_IP=$(cat "$(dirname "$0")/ewr-ipv4-bgp-primary-1c1g_ipv4.txt" 2>/dev/null)
-MIA_IP=$(cat "$(dirname "$0")/mia-ipv4-bgp-secondary-1c1g_ipv4.txt" 2>/dev/null)
-ORD_IP=$(cat "$(dirname "$0")/ord-ipv4-bgp-tertiary-1c1g_ipv4.txt" 2>/dev/null)
-LAX_IP=$(cat "$(dirname "$0")/lax-ipv6-bgp-1c1g_ipv4.txt" 2>/dev/null)
+# Get region information from .env file
+if [ -z "$BGP_REGION_PRIMARY" ] || [ -z "$BGP_REGION_SECONDARY" ] || [ -z "$BGP_REGION_TERTIARY" ] || [ -z "$BGP_REGION_QUATERNARY" ]; then
+  echo "Error: One or more BGP regions are not defined in .env file"
+  echo "Please ensure BGP_REGION_PRIMARY, BGP_REGION_SECONDARY, BGP_REGION_TERTIARY, and BGP_REGION_QUATERNARY are set"
+  exit 1
+fi
+
+# Set the IPs based on the region information from .env
+PRIMARY_IP=$(cat "$(dirname "$0")/${BGP_REGION_PRIMARY}-ipv4-bgp-primary-1c1g_ipv4.txt" 2>/dev/null)
+SECONDARY_IP=$(cat "$(dirname "$0")/${BGP_REGION_SECONDARY}-ipv4-bgp-secondary-1c1g_ipv4.txt" 2>/dev/null)
+TERTIARY_IP=$(cat "$(dirname "$0")/${BGP_REGION_TERTIARY}-ipv4-bgp-tertiary-1c1g_ipv4.txt" 2>/dev/null)
+QUATERNARY_IP=$(cat "$(dirname "$0")/${BGP_REGION_QUATERNARY}-ipv4-bgp-quaternary-1c1g_ipv4.txt" 2>/dev/null)
 
 # Check if IPs were found
-if [ -z "$EWR_IP" ] || [ -z "$MIA_IP" ] || [ -z "$ORD_IP" ] || [ -z "$LAX_IP" ]; then
+if [ -z "$PRIMARY_IP" ] || [ -z "$SECONDARY_IP" ] || [ -z "$TERTIARY_IP" ] || [ -z "$QUATERNARY_IP" ]; then
   echo "Error: Could not find all required IPs in IP files."
-  echo "Found: EWR=$EWR_IP, MIA=$MIA_IP, ORD=$ORD_IP, LAX=$LAX_IP"
+  echo "Found: PRIMARY(${BGP_REGION_PRIMARY})=$PRIMARY_IP, SECONDARY(${BGP_REGION_SECONDARY})=$SECONDARY_IP, TERTIARY(${BGP_REGION_TERTIARY})=$TERTIARY_IP, QUATERNARY(${BGP_REGION_QUATERNARY})=$QUATERNARY_IP"
   exit 1
 fi
 
 echo "========== BGP SERVERS STATUS =========="
-echo "Primary (EWR): $EWR_IP"
-echo "Secondary (MIA): $MIA_IP"
-echo "Tertiary (ORD): $ORD_IP" 
-echo "IPv6 (LAX): $LAX_IP"
+echo "Primary (${BGP_REGION_PRIMARY}): $PRIMARY_IP"
+echo "Secondary (${BGP_REGION_SECONDARY}): $SECONDARY_IP"
+echo "Tertiary (${BGP_REGION_TERTIARY}): $TERTIARY_IP" 
+echo "Quaternary (${BGP_REGION_QUATERNARY}): $QUATERNARY_IP"
 echo "========================================"
 
 # Function to check BIRD status on a server
@@ -57,14 +64,12 @@ check_bird_status() {
     echo "❌ ERROR: Could not get IPv4 BGP details"
   }
   
-  # Get IPv6 BGP details if it's the LAX server
-  if [[ "$server_name" == *"IPv6"* ]]; then
-    echo
-    echo "IPv6 BGP Details:"
-    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@$server_ip "birdc show protocols all vultr_v6 | head -20" || {
-      echo "❌ ERROR: Could not get IPv6 BGP details"
-    }
-  fi
+  # Get IPv6 BGP details (all servers now support IPv6)
+  echo
+  echo "IPv6 BGP Details:"
+  ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@$server_ip "birdc show protocols all vultr_v6 | head -20" || {
+    echo "❌ ERROR: Could not get IPv6 BGP details"
+  }
 
   # Check BGP route counts
   echo
@@ -88,13 +93,13 @@ check_bird_status() {
 }
 
 # Check each server
-check_bird_status "$EWR_IP" "Primary (EWR)"
-check_bird_status "$MIA_IP" "Secondary (MIA)"  
-check_bird_status "$ORD_IP" "Tertiary (ORD)"
-check_bird_status "$LAX_IP" "IPv6 (LAX)"
+check_bird_status "$PRIMARY_IP" "Primary (${BGP_REGION_PRIMARY})"
+check_bird_status "$SECONDARY_IP" "Secondary (${BGP_REGION_SECONDARY})"  
+check_bird_status "$TERTIARY_IP" "Tertiary (${BGP_REGION_TERTIARY})"
+check_bird_status "$QUATERNARY_IP" "Quaternary (${BGP_REGION_QUATERNARY})"
 
 echo
 echo "BGP status check completed for all servers"
 echo
 echo "To restart BGP on any server, use: ssh root@<server_ip> systemctl restart bird"
-echo "To test failover, stop BGP on the primary: ssh root@$EWR_IP systemctl stop bird"
+echo "To test failover, stop BGP on the primary: ssh root@$PRIMARY_IP systemctl stop bird"

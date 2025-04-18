@@ -1,0 +1,297 @@
+# Vultr BGP Anycast Deployment Plan
+
+## Overview
+This plan implements high availability using Vultr BGP Anycast across multiple regions for the following IP ranges:
+- IPv4: ${OUR_IPV4_BGP_RANGE} (192.30.120.0/23)
+- IPv6: ${OUR_IPV6_BGP_RANGE} (2620:71:4000::/48)
+- Our ASN: ${OUR_AS} (27218)
+
+## Prerequisites
+- Vultr API Key: ${VULTR_API_KEY}
+- Vultr API Endpoint: ${VULTR_API_ENDPOINT}
+- BGP Password: ${VULTR_BGP_PASSWORD}
+- BIRD 2.0 installed on all servers
+
+## Deployment Steps
+
+### 1. Deploy Vultr Instances in Multiple Regions
+```bash
+# Create primary instance in first region
+curl -X POST "${VULTR_API_ENDPOINT}instances" \
+  -H "Authorization: Bearer ${VULTR_API_KEY}" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "region": "sjc",
+    "plan": "vc2-1c-1gb",
+    "label": "bgp-primary",
+    "os_id": 387,
+    "enable_ipv6": true,
+    "tags": ["bgp", "primary"],
+    "user_data": "#!/bin/bash\napt-get update && apt-get install -y bird2"
+  }'
+
+# Create secondary instance in second region
+curl -X POST "${VULTR_API_ENDPOINT}instances" \
+  -H "Authorization: Bearer ${VULTR_API_KEY}" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "region": "ewr",
+    "plan": "vc2-1c-1gb",
+    "label": "bgp-secondary",
+    "os_id": 387,
+    "enable_ipv6": true,
+    "tags": ["bgp", "secondary"],
+    "user_data": "#!/bin/bash\napt-get update && apt-get install -y bird2"
+  }'
+
+# Create tertiary instance in third region
+curl -X POST "${VULTR_API_ENDPOINT}instances" \
+  -H "Authorization: Bearer ${VULTR_API_KEY}" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "region": "ams",
+    "plan": "vc2-1c-1gb",
+    "label": "bgp-tertiary",
+    "os_id": 387,
+    "enable_ipv6": true,
+    "tags": ["bgp", "tertiary"],
+    "user_data": "#!/bin/bash\napt-get update && apt-get install -y bird2"
+  }'
+```
+
+### 2. Enable BGP on Your Vultr Account
+Request BGP enablement through Vultr support with our ASN (${OUR_AS}) and IP ranges.
+
+### 3. Configure BIRD 2.0 on Each Server
+
+#### Primary Server Configuration
+```bash
+cat > /etc/bird/bird.conf << EOL
+# Global configuration
+router id PRIMARY_SERVER_IPV4;
+log syslog all;
+debug protocols all;
+
+# Define networks to announce
+protocol static {
+  ipv4 {
+    export all;
+  };
+  route ${OUR_IPV4_BGP_RANGE} blackhole;
+}
+
+protocol static {
+  ipv6 {
+    export all;
+  };
+  route ${OUR_IPV6_BGP_RANGE} blackhole;
+}
+
+# BGP configuration for Vultr
+protocol bgp vultr {
+  local as ${OUR_AS};
+  source address PRIMARY_SERVER_IPV4;
+  ipv4 {
+    import none;
+    export all;
+  };
+  graceful restart on;
+  multihop 2;
+  neighbor 169.254.169.254 as 64515;
+  password "${VULTR_BGP_PASSWORD}";
+}
+
+# IPv6 BGP configuration
+protocol bgp vultr6 {
+  local as ${OUR_AS};
+  source address PRIMARY_SERVER_IPV6;
+  ipv6 {
+    import none;
+    export all;
+  };
+  graceful restart on;
+  multihop 2;
+  neighbor 2001:19f0:ffff::1 as 64515;
+  password "${VULTR_BGP_PASSWORD}";
+}
+EOL
+```
+
+#### Secondary Server Configuration (with path prepending)
+```bash
+cat > /etc/bird/bird.conf << EOL
+# Global configuration
+router id SECONDARY_SERVER_IPV4;
+log syslog all;
+debug protocols all;
+
+# Define networks to announce
+protocol static {
+  ipv4 {
+    export all;
+  };
+  route ${OUR_IPV4_BGP_RANGE} blackhole;
+}
+
+protocol static {
+  ipv6 {
+    export all;
+  };
+  route ${OUR_IPV6_BGP_RANGE} blackhole;
+}
+
+# BGP configuration for Vultr
+protocol bgp vultr {
+  local as ${OUR_AS};
+  source address SECONDARY_SERVER_IPV4;
+  ipv4 {
+    import none;
+    export all;
+    export filter {
+      # Artificially increase path length by prepending the local AS number
+      bgp_path.prepend(${OUR_AS});
+      accept;
+    };
+  };
+  graceful restart on;
+  multihop 2;
+  neighbor 169.254.169.254 as 64515;
+  password "${VULTR_BGP_PASSWORD}";
+}
+
+# IPv6 BGP configuration
+protocol bgp vultr6 {
+  local as ${OUR_AS};
+  source address SECONDARY_SERVER_IPV6;
+  ipv6 {
+    import none;
+    export all;
+    export filter {
+      # Artificially increase path length by prepending the local AS number
+      bgp_path.prepend(${OUR_AS});
+      accept;
+    };
+  };
+  graceful restart on;
+  multihop 2;
+  neighbor 2001:19f0:ffff::1 as 64515;
+  password "${VULTR_BGP_PASSWORD}";
+}
+EOL
+```
+
+#### Tertiary Server Configuration (with double path prepending)
+```bash
+cat > /etc/bird/bird.conf << EOL
+# Global configuration
+router id TERTIARY_SERVER_IPV4;
+log syslog all;
+debug protocols all;
+
+# Define networks to announce
+protocol static {
+  ipv4 {
+    export all;
+  };
+  route ${OUR_IPV4_BGP_RANGE} blackhole;
+}
+
+protocol static {
+  ipv6 {
+    export all;
+  };
+  route ${OUR_IPV6_BGP_RANGE} blackhole;
+}
+
+# BGP configuration for Vultr
+protocol bgp vultr {
+  local as ${OUR_AS};
+  source address TERTIARY_SERVER_IPV4;
+  ipv4 {
+    import none;
+    export all;
+    export filter {
+      # Artificially increase path length by prepending the local AS number twice
+      bgp_path.prepend(${OUR_AS});
+      bgp_path.prepend(${OUR_AS});
+      accept;
+    };
+  };
+  graceful restart on;
+  multihop 2;
+  neighbor 169.254.169.254 as 64515;
+  password "${VULTR_BGP_PASSWORD}";
+}
+
+# IPv6 BGP configuration
+protocol bgp vultr6 {
+  local as ${OUR_AS};
+  source address TERTIARY_SERVER_IPV6;
+  ipv6 {
+    import none;
+    export all;
+    export filter {
+      # Artificially increase path length by prepending the local AS number twice
+      bgp_path.prepend(${OUR_AS});
+      bgp_path.prepend(${OUR_AS});
+      accept;
+    };
+  };
+  graceful restart on;
+  multihop 2;
+  neighbor 2001:19f0:ffff::1 as 64515;
+  password "${VULTR_BGP_PASSWORD}";
+}
+EOL
+```
+
+### 4. Deploy and Start BIRD on Each Server
+```bash
+systemctl enable bird
+systemctl start bird
+```
+
+### 5. Verify BGP Sessions
+```bash
+birdc show proto all vultr
+birdc show proto all vultr6
+```
+
+### 6. Setup IP Routes on Each Server
+Configure your actual services to listen on the anycast IPs within your ranges:
+```bash
+# For IPv4
+ip addr add 192.30.120.1/32 dev lo
+ip route add 192.30.120.0/23 dev lo
+
+# For IPv6
+ip -6 addr add 2620:71:4000::1/128 dev lo
+ip -6 route add 2620:71:4000::/48 dev lo
+```
+
+### 7. Testing Failover
+1. Start your service on all servers
+2. Monitor traffic to your anycast IP
+3. Test failover by stopping the BIRD service on the primary server:
+   ```bash
+   systemctl stop bird
+   ```
+4. Traffic should automatically route to the secondary server
+
+## Monitoring
+- Setup regular health checks using the Vultr API:
+  ```bash
+  curl -X GET "${VULTR_API_ENDPOINT}instances" \
+    -H "Authorization: Bearer ${VULTR_API_KEY}"
+  ```
+- Monitor BGP status on each server:
+  ```bash
+  watch -n 10 'birdc show route'
+  ```
+
+## Automation Scripts
+Create automation scripts to:
+1. Deploy new instances in additional regions
+2. Update BIRD configuration across all servers
+3. Monitor BGP session status
+4. Test connectivity to the anycast IP from various locations

@@ -833,32 +833,20 @@ else
 fi
 
 # Set regions and plans - sourced from .env file
-# Check that required regions are specified
-if [ -z "$BGP_REGION_PRIMARY" ]; then
-  echo "Error: BGP_REGION_PRIMARY must be specified in .env file"
-  exit 1
-fi
-if [ -z "$BGP_REGION_SECONDARY" ]; then
-  echo "Error: BGP_REGION_SECONDARY must be specified in .env file"
-  exit 1
-fi
-if [ -z "$BGP_REGION_TERTIARY" ]; then
-  echo "Error: BGP_REGION_TERTIARY must be specified in .env file"
-  exit 1
-fi
-
-# Set quaternary region, defaulting to tertiary if not specified
-BGP_REGION_QUATERNARY=${BGP_REGION_QUATERNARY:-${BGP_REGION_TERTIARY}}
+# For backward compatibility, check both new and legacy variables
+BGP_REGION_PRIMARY=${BGP_REGION_PRIMARY:-${IPV4_REGION_PRIMARY:-"ewr"}}
+BGP_REGION_SECONDARY=${BGP_REGION_SECONDARY:-${IPV4_REGION_SECONDARY:-"mia"}}
+BGP_REGION_TERTIARY=${BGP_REGION_TERTIARY:-${IPV4_REGION_TERTIARY:-"ord"}}
 
 # Create arrays for BGP regions
-BGP_REGIONS=("$BGP_REGION_PRIMARY" "$BGP_REGION_SECONDARY" "$BGP_REGION_TERTIARY" "$BGP_REGION_QUATERNARY")
+BGP_REGIONS=("$BGP_REGION_PRIMARY" "$BGP_REGION_SECONDARY" "$BGP_REGION_TERTIARY")
 
 # For backward compatibility - will be deprecated in future versions
-IPV4_REGION_PRIMARY=${IPV4_REGION_PRIMARY:-${BGP_REGION_PRIMARY}}
-IPV4_REGION_SECONDARY=${IPV4_REGION_SECONDARY:-${BGP_REGION_SECONDARY}}
-IPV4_REGION_TERTIARY=${IPV4_REGION_TERTIARY:-${BGP_REGION_TERTIARY}}
+IPV4_REGION_PRIMARY=${BGP_REGION_PRIMARY}
+IPV4_REGION_SECONDARY=${BGP_REGION_SECONDARY}
+IPV4_REGION_TERTIARY=${BGP_REGION_TERTIARY}
 IPV4_REGIONS=("$IPV4_REGION_PRIMARY" "$IPV4_REGION_SECONDARY" "$IPV4_REGION_TERTIARY")
-IPV6_REGION=${IPV6_REGION:-${BGP_REGION_QUATERNARY}} # For dual-stack, quaternary server handles IPv6 by default
+IPV6_REGION=${IPV6_REGION:-${BGP_REGION_PRIMARY}} # For dual-stack, use primary region for IPv6 too by default
 
 # Region to BGP community mapping
 # These values are used for Vultr BGP communities based on datacenter location
@@ -2004,150 +1992,201 @@ generate_dual_stack_bird_config() {
   local ipv6=$4
   local config_file="${server_type}_bird.conf"
   
+  # Calculate the link-local address from the IPv6 address (needed for Vultr IPv6 BGP)
+  local ipv6_suffix=$(echo $ipv6 | sed -E 's/.*:([0-9a-f:]+)/\1/')
+  local link_local="fe80::$ipv6_suffix"
+  
   echo "Generating dual-stack BIRD configuration for $server_type server..."
+  echo "IPv4 address: $ipv4"
+  echo "IPv6 address: $ipv6"
+  echo "Link-local address: $link_local"
+  echo "Path prepend count: $prepend_count"
   
-  # Use variables for ASN and BIRD version
-  local OUR_ASN="${OUR_AS:-27218}"
-  local VULTR_ASN="64515"
-  local BIRD_VERSION="2.16.2"
+  # Extract region code from server type for BGP community
+  # Format of server_type is expected to be "REGION-dual-*"
+  local region_code=$(echo "$server_type" | cut -d'-' -f1)
   
-  # Determine prepend string based on count
-  local prepend_string=""
-  if [ "$prepend_count" -gt 0 ]; then
-    for i in $(seq 1 $prepend_count); do
-      prepend_string="${prepend_string}    bgp_path.prepend($OUR_ASN);
-"
-    done
+  # Validate region code is not empty
+  if [ -z "$region_code" ]; then
+    echo "ERROR: Could not extract region code from server_type: $server_type"
+    return 1
   fi
   
-  # Start with basic dual-stack configuration
+  # Use region-based BGP community - lookup from the REGION_TO_COMMUNITY array
+  local region_community=""
+  
+  # Get the community value for this region from our mapping
+  if [ "${REGION_TO_COMMUNITY[$region_code]+_}" ]; then
+    region_community="20473:${REGION_TO_COMMUNITY[$region_code]}"
+    echo "Using BGP community $region_community for region $region_code"
+  else
+    # If region not in our mapping, use a default community
+    echo "WARNING: Region $region_code not in REGION_TO_COMMUNITY mapping"
+    region_community="20473:4000"  # Customer route only
+    echo "Using default BGP community $region_community"
+  fi
+  
+  # Start with basic configuration
   cat > "$config_file" << EOL
-# BIRD $BIRD_VERSION Configuration for $server_type Server (Dual-Stack)
-router id $ipv4;
+# Dual-stack BIRD 2.0 Configuration (IPv4 + IPv6)
+# Generated for $server_type
+# Path prepend level: $prepend_count
+
+# Global settings
 log syslog all;
+router id $ipv4;
+timeformat protocol iso long;
+timeformat log iso long;
+timeformat table iso long;
+timeformat route iso long;
 
-# Define our ASN and peer ASN
-define OUR_ASN = $OUR_ASN;
-define VULTR_ASN = $VULTR_ASN;
+# Define our own IPv4 and IPv6 prefixes
+define OUR_IPV4_PREFIX = $OUR_IPV4_BGP_RANGE;
+define OUR_IPV6_PREFIX = $OUR_IPV6_BGP_RANGE;
 
-# Define our prefixes
-define OUR_IPV4_PREFIX = ${OUR_IPV4_BGP_RANGE:-192.30.120.0/23};
-define OUR_IPV6_PREFIX = ${OUR_IPV6_BGP_RANGE:-2620:71:4000::/48};
+# Set our ASN
+define OUR_ASN = $OUR_AS;
+define VULTR_ASN = 20473;
 
-# Common configuration for all protocols
-protocol device { }
-
-# Direct protocol for IPv4
-protocol direct v4direct {
-  ipv4;
-  interface "dummy*", "enp1s0";
+# Configure protocols for system integration
+protocol device {
+  scan time 10;
 }
 
-# Direct protocol for IPv6
-protocol direct v6direct {
-  ipv6;
-  interface "dummy*", "enp1s0";
-}
-
-# Kernel protocol for IPv4
-protocol kernel v4kernel {
+# IPv4 kernel protocol
+protocol kernel {
+  scan time 20;
   ipv4 {
+    import none;
     export all;
   };
 }
 
-# Kernel protocol for IPv6
-protocol kernel v6kernel {
+# IPv6 kernel protocol
+protocol kernel v6 {
+  scan time 20;
   ipv6 {
+    import none;
     export all;
   };
 }
 
-# Static routes for IPv4
-protocol static v4static {
+# Configure direct protocol for interfaces
+protocol direct {
   ipv4;
-  route OUR_IPV4_PREFIX blackhole;
-}
-
-# Static routes for IPv6
-protocol static v6static {
   ipv6;
-  route OUR_IPV6_PREFIX blackhole;
 }
 
-# IPv4 BGP configuration
-protocol bgp vultr_v4 {
-  description "Vultr IPv4 BGP";
+#####################
+# IPv4 Configuration
+#####################
+
+# Create a dummy interface for IPv4 BGP announcements
+protocol static ipv4_routes {
+  ipv4;
+  route OUR_IPV4_PREFIX via "dummy0";
+}
+
+# Configure IPv4 BGP session with Vultr route server
+protocol bgp vultr_ipv4 {
+  description "IPv4 BGP session with Vultr";
   local as OUR_ASN;
   neighbor 169.254.169.254 as VULTR_ASN;
-  multihop 2;
-  password "${VULTR_BGP_PASSWORD:-xV72GUaFMSYxNmee}";
+  password "$VULTR_BGP_PASSWORD";
+  multihop;
   ipv4 {
-    import none;
+    import all;
+    export where net ~ [ OUR_IPV4_PREFIX ];
+  };
+  
+  # BGP path prepending via community
 EOL
 
-  # Add path prepending for IPv4 if specified
-  if [ "$prepend_count" -gt 0 ]; then
-    cat >> "$config_file" << EOL
-    export filter {
-      if proto = "v4static" then {
-        # Add path prepending ($prepend_count times)
-$(echo -e "$prepend_string")
-        accept;
-      }
-      else reject;
-    };
-EOL
+  # Add prepending communities based on server role
+  if [ $prepend_count -gt 0 ]; then
+    # Use Vultr-specific communities instead of manual path prepending
+    if [ $prepend_count -eq 1 ]; then
+      echo "  # 1x path prepending for secondary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6001);" >> "$config_file"
+    elif [ $prepend_count -eq 2 ]; then
+      echo "  # 2x path prepending for tertiary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6002);" >> "$config_file"
+    elif [ $prepend_count -eq 3 ]; then
+      echo "  # 3x path prepending for quaternary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6003);" >> "$config_file"
+    fi
   else
-    cat >> "$config_file" << EOL
-    export where proto = "v4static";
-EOL
+    echo "  # Primary server - no path prepending" >> "$config_file"
   fi
 
-  # Continue with the IPv6 BGP configuration
+  # Add location-specific BGP community
   cat >> "$config_file" << EOL
-  };
+  
+  # Add BGP communities
+  add bgp_community += (20473, 4000); # Customer-originated route
+  add bgp_community += ($region_community); # Datacenter location
 }
 
-# IPv6 BGP configuration
-protocol bgp vultr_v6 {
-  description "Vultr IPv6 BGP";
+#####################
+# IPv6 Configuration
+#####################
+
+# Create a dummy interface for IPv6 BGP announcements
+protocol static ipv6_routes {
+  ipv6;
+  route OUR_IPV6_PREFIX via "dummy0";
+}
+
+# Static route to Vultr's IPv6 BGP endpoint (REQUIRED)
+# This is crucial for IPv6 BGP to work and not well-documented by Vultr
+protocol static vultr_ipv6_static {
+  ipv6;
+  route 2001:19f0:ffff::1/128 via $link_local;
+}
+
+# Configure IPv6 BGP session with Vultr route server
+protocol bgp vultr_ipv6 {
+  description "IPv6 BGP session with Vultr";
   local as OUR_ASN;
   neighbor 2001:19f0:ffff::1 as VULTR_ASN;
-  multihop 2;
-  password "${VULTR_BGP_PASSWORD:-xV72GUaFMSYxNmee}";
+  password "$VULTR_BGP_PASSWORD";
+  multihop;
   ipv6 {
-    import none;
+    import all;
+    export where net ~ [ OUR_IPV6_PREFIX ];
+  };
+  
+  # BGP path prepending via community
 EOL
 
-  # Add path prepending for IPv6 if specified
-  if [ "$prepend_count" -gt 0 ]; then
-    cat >> "$config_file" << EOL
-    export filter {
-      if proto = "v6static" then {
-        # Add path prepending ($prepend_count times)
-$(echo -e "$prepend_string")
-        accept;
-      }
-      else reject;
-    };
-EOL
+  # Add prepending communities for IPv6 BGP based on server role (same as IPv4)
+  if [ $prepend_count -gt 0 ]; then
+    # Use Vultr-specific communities instead of manual path prepending
+    if [ $prepend_count -eq 1 ]; then
+      echo "  # 1x path prepending for secondary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6001);" >> "$config_file"
+    elif [ $prepend_count -eq 2 ]; then
+      echo "  # 2x path prepending for tertiary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6002);" >> "$config_file"
+    elif [ $prepend_count -eq 3 ]; then
+      echo "  # 3x path prepending for quaternary server" >> "$config_file"
+      echo "  add bgp_community += (20473, 6003);" >> "$config_file"
+    fi
   else
-    cat >> "$config_file" << EOL
-    export where proto = "v6static";
-EOL
+    echo "  # Primary server - no path prepending" >> "$config_file"
   fi
 
-  # Finish the configuration
+  # Add location-specific BGP community for IPv6
   cat >> "$config_file" << EOL
-  };
+  
+  # Add BGP communities
+  add bgp_community += (20473, 4000); # Customer-originated route
+  add bgp_community += ($region_community); # Datacenter location
 }
 EOL
 
   echo "Dual-stack BIRD configuration generated at $config_file"
   return 0
-}
-}
 }
 
 # Function to generate BIRD configuration for IPv4 servers
@@ -3041,7 +3080,7 @@ EOF
   echo "IPv4 BIRD configuration deployed to $server_type server"
 }
 
-# Function to deploy dual-stack BIRD configuration to a server
+# Function to deploy IPv6 BIRD configuration to a server
 deploy_dual_stack_bird_config() {
   local server_type=$1
   local server_ip=$2
@@ -3049,49 +3088,29 @@ deploy_dual_stack_bird_config() {
   
   echo "Deploying dual-stack BIRD configuration to $server_type server at $server_ip..."
   
-  # Check if config file exists
-  if [ ! -f "$config_file" ]; then
-    log "Error: Configuration file $config_file not found for $server_type server." "ERROR"
-    return 1
-  fi
-  
   # Upload BIRD configuration
-  scp $SSH_OPTIONS "$config_file" "root@$server_ip:/etc/bird/bird.conf"
+  scp -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" "$config_file" "root@$server_ip:/etc/bird/bird.conf"
   
-  # Configure server for BGP
-  ssh $SSH_OPTIONS "root@$server_ip" << EOL
-# Install BIRD if not already installed
-if ! command -v bird &> /dev/null; then
-  apt-get update
-  apt-get install -y bird2 build-essential git curl wget automake flex bison libncurses-dev libreadline-dev
-fi
-
+  # Configure dummy interface for IPv4 and IPv6 announcements
+  ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" "root@$server_ip" << 'EOL'
 # Create and configure dummy interface for both IPv4 and IPv6
 ip link add dummy0 type dummy || true
 ip link set dummy0 up
+sysctl -w net.ipv6.conf.all.forwarding=1
+sysctl -w net.ipv4.conf.all.forwarding=1
 
-# Create RPKI and other include directories
-mkdir -p /etc/bird/rpki
+# Add static route to Vultr IPv6 BGP endpoint (REQUIRED)
+ip -6 route add 2001:19f0:ffff::1/128 via fe80::201:ffff:fe01:1 dev eth0 || true
 
-# Enable and start BIRD service
-systemctl enable bird
+# Restart BIRD
 systemctl restart bird
 
-# Set up hourly cron job to check and restart BIRD if needed
-cat > /etc/cron.hourly/check_bird << CRON
-#!/bin/bash
-if ! systemctl is-active --quiet bird; then
-  logger -t bird-cron "BIRD service not running. Attempting to restart..."
-  systemctl restart bird
-fi
-CRON
-
-chmod +x /etc/cron.hourly/check_bird
+# Make sure it started correctly
+systemctl status bird
 EOL
   
   echo "Dual-stack BIRD configuration deployed to $server_type server"
   return 0
-}
 }
 
 deploy_ipv6_bird_config() {
@@ -3912,15 +3931,15 @@ deploy() {
         log "Deploying IPv4-only BGP Anycast infrastructure..." "INFO"
         
         # Create IPv4 instances (3 servers as per documentation)
-        create_instance "${IPV4_REGIONS[0]}" "${IPV4_REGIONS[0]}-ipv4-bgp-primary-1c1g" "1" "false" || { echo "Failed to create primary instance"; exit 1; }
-        create_instance "${IPV4_REGIONS[1]}" "${IPV4_REGIONS[1]}-ipv4-bgp-secondary-1c1g" "2" "false" || { echo "Failed to create secondary instance"; exit 1; }
-        create_instance "${IPV4_REGIONS[2]}" "${IPV4_REGIONS[2]}-ipv4-bgp-tertiary-1c1g" "3" "false" || { echo "Failed to create tertiary instance"; exit 1; }
+        create_instance "${IPV4_REGIONS[0]}" "ewr-ipv4-bgp-primary-1c1g" "1" "false" || { echo "Failed to create primary instance"; exit 1; }
+        create_instance "${IPV4_REGIONS[1]}" "mia-ipv4-bgp-secondary-1c1g" "2" "false" || { echo "Failed to create secondary instance"; exit 1; }
+        create_instance "${IPV4_REGIONS[2]}" "ord-ipv4-bgp-tertiary-1c1g" "3" "false" || { echo "Failed to create tertiary instance"; exit 1; }
         ;;
       ipv6)
         log "Deploying IPv6-only BGP Anycast infrastructure..." "INFO"
         
         # Create IPv6 instance
-        create_instance "${IPV6_REGION}" "${IPV6_REGION}-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
+        create_instance "${IPV6_REGION}" "lax-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
         ;;
       dual|*)
         log "Deploying dual-stack BGP Anycast infrastructure..." "INFO"
@@ -3929,9 +3948,8 @@ deploy() {
         create_instance "${BGP_REGIONS[0]}" "${BGP_REGIONS[0]}-dual-bgp-primary-1c1g" "1" "true" || { echo "Failed to create primary instance"; exit 1; }
         create_instance "${BGP_REGIONS[1]}" "${BGP_REGIONS[1]}-dual-bgp-secondary-1c1g" "2" "true" || { echo "Failed to create secondary instance"; exit 1; }
         create_instance "${BGP_REGIONS[2]}" "${BGP_REGIONS[2]}-dual-bgp-tertiary-1c1g" "3" "true" || { echo "Failed to create tertiary instance"; exit 1; }
-        create_instance "${BGP_REGIONS[3]}" "${BGP_REGIONS[3]}-dual-bgp-quaternary-1c1g" "3" "true" || { echo "Failed to create quaternary instance"; exit 1; }
         
-        # All servers have dual-stack IPv4/IPv6 enabled
+        # No longer need a separate IPv6-only instance as all servers have IPv6 enabled
         log "All servers now configured with dual-stack IPv4/IPv6 support" "INFO"
         ;;
     esac
@@ -4358,12 +4376,43 @@ deploy() {
       # At this point the IPs should be automatically attached to the instances
       save_deployment_state $STAGE_IPS_ATTACHED "IPv4 floating IPs attached to instances"
       
-  # Generate BIRD configurations
-  # Use improved dual-stack configurations for all servers
-  generate_dual_stack_bird_config "${BGP_REGIONS[0]}-ipv4-primary" "$(cat ${BGP_REGIONS[0]}-ipv4-bgp-primary-1c1g_ipv4.txt 2>/dev/null || echo "0.0.0.0")" 0 ""
-  generate_dual_stack_bird_config "${BGP_REGIONS[1]}-ipv4-secondary" "$(cat ${BGP_REGIONS[1]}-ipv4-bgp-secondary-1c1g_ipv4.txt 2>/dev/null || echo "0.0.0.0")" 1 ""
-  generate_dual_stack_bird_config "${BGP_REGIONS[2]}-ipv4-tertiary" "$(cat ${BGP_REGIONS[2]}-ipv4-bgp-tertiary-1c1g_ipv4.txt 2>/dev/null || echo "0.0.0.0")" 2 ""
-  generate_dual_stack_bird_config "${BGP_REGIONS[3]}-ipv4-quaternary" "$(cat ${BGP_REGIONS[3]}-ipv4-bgp-quaternary-1c1g_ipv4.txt 2>/dev/null || echo "0.0.0.0")" 2 "$(cat ${BGP_REGIONS[3]}-ipv6-bgp-1c1g_ipv6.txt 2>/dev/null || echo "::")"
+      # Generate BIRD configurations
+      generate_ipv4_bird_config "ewr-ipv4-primary" "$(cat ewr-ipv4-bgp-primary-1c1g_ipv4.txt)" 0
+      generate_ipv4_bird_config "mia-ipv4-secondary" "$(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt)" 1
+      generate_ipv4_bird_config "ord-ipv4-tertiary" "$(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt)" 2
+      
+      # Save checkpoint after BIRD configs are generated
+      save_deployment_state $STAGE_BIRD_CONFIGS "IPv4 BIRD configurations generated"
+      ;;
+      
+    ipv6)
+      log "Deploying IPv6-only BGP Anycast infrastructure..." "INFO"
+      
+      # Create IPv6 instance
+      create_instance "${IPV6_REGION}" "lax-ipv6-bgp-1c1g" "1" "true" || { echo "Failed to create IPv6 instance"; exit 1; }
+      
+      # Save checkpoint after instance is created
+      save_deployment_state $STAGE_SERVERS_CREATED "IPv6 instance created successfully"
+      
+      # CRITICAL FIX: Create floating IP for IPv6 instance with proper rate limit handling
+      log "Creating floating IP with appropriate delay to avoid API rate limits..." "INFO"
+      
+      # Wait before creating IP to avoid potential rate limits
+      log "Waiting 30 seconds before creating IPv6 floating IP..." "INFO"
+      sleep 30
+      
+      # Create floating IP for IPv6 instance
+      log "Creating floating IP for IPv6 instance (LAX)..." "INFO"
+      create_floating_ip "$(cat lax-ipv6-bgp-1c1g_id.txt)" "${IPV6_REGION}" "ipv6" || { echo "Failed to create floating IP for IPv6 instance"; exit 1; }
+      
+      # Save checkpoint after floating IP is created
+      save_deployment_state $STAGE_IPS_CREATED "IPv6 floating IP created successfully"
+      
+      # At this point the IP should be automatically attached to the instance
+      save_deployment_state $STAGE_IPS_ATTACHED "IPv6 floating IP attached to instance"
+      
+      # Generate BIRD configuration
+      generate_ipv6_bird_config "lax-ipv6" "$(cat lax-ipv6-bgp-1c1g_ipv4.txt)" "$(cat lax-ipv6-bgp-1c1g_ipv6.txt)"
       
       # Save checkpoint after BIRD config is generated
       save_deployment_state $STAGE_BIRD_CONFIGS "IPv6 BIRD configuration generated"
@@ -4414,12 +4463,159 @@ deploy() {
       # At this point the IPs should be automatically attached to the instances
       save_deployment_state $STAGE_IPS_ATTACHED "All floating IPs attached to instances"
       
+      # Generate BIRD configurations
+      # Now each server gets a dual-stack configuration with both IPv4 and IPv6 announcements
+      # Each server will announce both IPv4 and IPv6 prefixes following same prepending hierarchy
+      generate_dual_stack_bird_config "${BGP_REGIONS[0]}-dual-primary" "$(cat ${BGP_REGIONS[0]}-dual-bgp-primary-1c1g_ipv4.txt)" 0 "$(cat ${BGP_REGIONS[0]}-dual-bgp-primary-1c1g_ipv6.txt)"
+      generate_dual_stack_bird_config "${BGP_REGIONS[1]}-dual-secondary" "$(cat ${BGP_REGIONS[1]}-dual-bgp-secondary-1c1g_ipv4.txt)" 1 "$(cat ${BGP_REGIONS[1]}-dual-bgp-secondary-1c1g_ipv6.txt)"
+      generate_dual_stack_bird_config "${BGP_REGIONS[2]}-dual-tertiary" "$(cat ${BGP_REGIONS[2]}-dual-bgp-tertiary-1c1g_ipv4.txt)" 2 "$(cat ${BGP_REGIONS[2]}-dual-bgp-tertiary-1c1g_ipv6.txt)"
+      
+      # Save checkpoint after BIRD configs are generated
+      save_deployment_state $STAGE_BIRD_CONFIGS "All BIRD configurations generated"
+      ;;
+  esac
+  fi
+  
+  # Continue with floating IP creation if we skipped VM creation
+  if [ $current_stage -eq $STAGE_SERVERS_CREATED ]; then
+    log "Continuing with floating IP creation for existing VMs..." "INFO"
+    
+    # Normally we would use the instance IDs stored in the temp files, but they don't exist
+    # We need to detect the existing VMs by their labels
+    log "Detecting existing BGP instances..." "INFO"
+    
+    # Get all VM instances
+    vm_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances?per_page=100" \
+      -H "Authorization: Bearer ${VULTR_API_KEY}")
+    
+    # Extract instances with BGP labels
+    ipv4_instances=()
+    ipv6_instance=""
+    
+    # Look for primary, secondary, and tertiary IPv4 instances
+    ewr_vm_id=$(echo "$vm_response" | grep -o '{[^}]*"label":"ewr-ipv4-bgp-primary-1c1g"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    mia_vm_id=$(echo "$vm_response" | grep -o '{[^}]*"label":"mia-ipv4-bgp-secondary-1c1g"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    ord_vm_id=$(echo "$vm_response" | grep -o '{[^}]*"label":"ord-ipv4-bgp-tertiary-1c1g"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    
+    # Look for IPv6 instance
+    lax_vm_id=$(echo "$vm_response" | grep -o '{[^}]*"label":"lax-ipv6-bgp-1c1g"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    
+    if [ ! -z "$ewr_vm_id" ]; then
+      log "Found existing EWR IPv4 BGP instance: $ewr_vm_id" "INFO"
+      ipv4_instances+=("$ewr_vm_id")
+    fi
+    
+    if [ ! -z "$mia_vm_id" ]; then
+      log "Found existing MIA IPv4 BGP instance: $mia_vm_id" "INFO"
+      ipv4_instances+=("$mia_vm_id")
+    fi
+    
+    if [ ! -z "$ord_vm_id" ]; then
+      log "Found existing ORD IPv4 BGP instance: $ord_vm_id" "INFO"
+      ipv4_instances+=("$ord_vm_id")
+    fi
+    
+    if [ ! -z "$lax_vm_id" ]; then
+      log "Found existing LAX IPv6 BGP instance: $lax_vm_id" "INFO"
+      ipv6_instance="$lax_vm_id"
+    fi
+    
+    # Count found instances
+    ipv4_count=${#ipv4_instances[@]}
+    
+    if [ $ipv4_count -eq 0 ] && [ -z "$ipv6_instance" ]; then
+      log "No existing BGP instances found." "WARN"
+      log "This script is designed to continue with existing BGP instances." "WARN"
+      log "Would you like to create new instances or exit?" "WARN"
+      read -p "Create new instances? (y/n): " create_new
+      if [[ $create_new =~ ^[Yy]$ ]]; then
+        log "Creating new instances..." "INFO"
+        # We'll let the script continue through normal VM creation
+        return 0
+      else
+        log "Exiting as per user request." "INFO"
+        exit 0
+      fi
+    fi
+    
+    # Get reserved IPs and attach them to instances if needed
+    log "Querying existing reserved IPs..." "INFO"
+    
+    # Get existing reserved/floating IPs
+    reserved_ips_response=$(curl -s -X GET "${VULTR_API_ENDPOINT}reserved-ips" \
+      -H "Authorization: Bearer ${VULTR_API_KEY}")
+      
+    # Extract IPv4 floating IPs and check if they're attached
+    ewr_ip=$(echo "$reserved_ips_response" | grep -o '{[^}]*"label":"ewr-ipv4-primary"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    mia_ip=$(echo "$reserved_ips_response" | grep -o '{[^}]*"label":"mia-ipv4-secondary"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    ord_ip=$(echo "$reserved_ips_response" | grep -o '{[^}]*"label":"ord-ipv4-tertiary"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    
+    # Extract IPv6 floating IP
+    lax_ip=$(echo "$reserved_ips_response" | grep -o '{[^}]*"label":"lax-ipv6"[^}]*}' | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+    
+    # Save instance IDs to files so other parts of script can find them
+    if [ ! -z "$ewr_vm_id" ]; then
+      echo "$ewr_vm_id" > "ewr-ipv4-bgp-primary-1c1g_id.txt"
+      ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances/$ewr_vm_id" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}" | grep -o '"main_ip":"[^"]*' | cut -d'"' -f4)
+      echo "$ips" > "ewr-ipv4-bgp-primary-1c1g_ipv4.txt"
+    fi
+    
+    if [ ! -z "$mia_vm_id" ]; then
+      echo "$mia_vm_id" > "mia-ipv4-bgp-secondary-1c1g_id.txt"
+      ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances/$mia_vm_id" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}" | grep -o '"main_ip":"[^"]*' | cut -d'"' -f4)
+      echo "$ips" > "mia-ipv4-bgp-secondary-1c1g_ipv4.txt"
+    fi
+    
+    if [ ! -z "$ord_vm_id" ]; then
+      echo "$ord_vm_id" > "ord-ipv4-bgp-tertiary-1c1g_id.txt"
+      ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances/$ord_vm_id" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}" | grep -o '"main_ip":"[^"]*' | cut -d'"' -f4)
+      echo "$ips" > "ord-ipv4-bgp-tertiary-1c1g_ipv4.txt"
+    fi
+    
+    if [ ! -z "$lax_vm_id" ]; then
+      echo "$lax_vm_id" > "lax-ipv6-bgp-1c1g_id.txt"
+      ips=$(curl -s -X GET "${VULTR_API_ENDPOINT}instances/$lax_vm_id" \
+        -H "Authorization: Bearer ${VULTR_API_KEY}" | grep -o '"main_ip":"[^"]*' | cut -d'"' -f4)
+      echo "$ips" > "lax-ipv6-bgp-1c1g_ipv4.txt"
+    fi
+    
+    # Now we have detected the VMs and have their IPs, continue with the floating IP attachment
+    log "Successfully detected existing BGP instances and saved their information" "INFO"
+    log "Ready to continue with floating IP attachment" "INFO"
+  fi
+  
+  # Save VM IDs for potential future cleanup
+  all_vm_ids=""
+  
+  if [ ! -z "$ewr_vm_id" ]; then
+    all_vm_ids+="$ewr_vm_id\n"
+  fi
+  
+  if [ ! -z "$mia_vm_id" ]; then
+    all_vm_ids+="$mia_vm_id\n"
+  fi
+  
+  if [ ! -z "$ord_vm_id" ]; then
+    all_vm_ids+="$ord_vm_id\n"
+  fi
+  
+  if [ ! -z "$lax_vm_id" ]; then
+    all_vm_ids+="$lax_vm_id\n"
+  fi
+  
+  if [ ! -z "$all_vm_ids" ]; then
+    echo -e "$all_vm_ids" > "bgp_vms_old_ids.txt"
+    log "Saved instance IDs for potential future cleanup" "INFO"
+  fi
+  
   # Generate BIRD configurations
-  # Use improved dual-stack configurations for all servers
-  generate_dual_stack_bird_config "${BGP_REGIONS[0]}-ipv4-primary" "$(cat ${BGP_REGIONS[0]}-ipv4-bgp-primary-1c1g_ipv4.txt 2>/dev/null || echo "0.0.0.0")" 0 ""
-  generate_dual_stack_bird_config "${BGP_REGIONS[1]}-ipv4-secondary" "$(cat ${BGP_REGIONS[1]}-ipv4-bgp-secondary-1c1g_ipv4.txt 2>/dev/null || echo "0.0.0.0")" 1 ""
-  generate_dual_stack_bird_config "${BGP_REGIONS[2]}-ipv4-tertiary" "$(cat ${BGP_REGIONS[2]}-ipv4-bgp-tertiary-1c1g_ipv4.txt 2>/dev/null || echo "0.0.0.0")" 2 ""
-  generate_dual_stack_bird_config "${BGP_REGIONS[3]}-ipv4-quaternary" "$(cat ${BGP_REGIONS[3]}-ipv4-bgp-quaternary-1c1g_ipv4.txt 2>/dev/null || echo "0.0.0.0")" 2 "$(cat ${BGP_REGIONS[3]}-ipv6-bgp-1c1g_ipv6.txt 2>/dev/null || echo "::")"
+  generate_ipv4_bird_config "ewr-ipv4-primary" "$(cat ewr-ipv4-bgp-primary-1c1g_ipv4.txt)" 0
+  generate_ipv4_bird_config "mia-ipv4-secondary" "$(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt)" 1
+  generate_ipv4_bird_config "ord-ipv4-tertiary" "$(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt)" 2
+  generate_ipv6_bird_config "lax-ipv6" "$(cat lax-ipv6-bgp-1c1g_ipv4.txt)" "$(cat lax-ipv6-bgp-1c1g_ipv6.txt)"
   
   # Perform a detailed diagnostic after configuration generation
   log "DIAGNOSTIC: Listing all files after configuration generation:" "DEBUG"
@@ -4537,13 +4733,13 @@ deploy() {
     return 1
   fi
   
-  # Deploy BIRD configurations with dual-stack support
-  deploy_dual_stack_bird_config "${BGP_REGIONS[0]}-ipv4-primary" "$(cat ${BGP_REGIONS[0]}-ipv4-bgp-primary-1c1g_ipv4.txt 2>/dev/null || echo "")"
-  deploy_dual_stack_bird_config "${BGP_REGIONS[1]}-ipv4-secondary" "$(cat ${BGP_REGIONS[1]}-ipv4-bgp-secondary-1c1g_ipv4.txt 2>/dev/null || echo "")"
-  deploy_dual_stack_bird_config "${BGP_REGIONS[2]}-ipv4-tertiary" "$(cat ${BGP_REGIONS[2]}-ipv4-bgp-tertiary-1c1g_ipv4.txt 2>/dev/null || echo "")"
-  deploy_dual_stack_bird_config "${BGP_REGIONS[3]}-ipv4-quaternary" "$(cat ${BGP_REGIONS[3]}-ipv4-bgp-quaternary-1c1g_ipv4.txt 2>/dev/null || echo "")"
+  # Deploy BIRD configurations - Now using dual-stack configs on all servers
+  deploy_dual_stack_bird_config "${BGP_REGIONS[0]}-dual-primary" "$(cat ${BGP_REGIONS[0]}-dual-bgp-primary-1c1g_ipv4.txt)"
+  deploy_dual_stack_bird_config "${BGP_REGIONS[1]}-dual-secondary" "$(cat ${BGP_REGIONS[1]}-dual-bgp-secondary-1c1g_ipv4.txt)"
+  deploy_dual_stack_bird_config "${BGP_REGIONS[2]}-dual-tertiary" "$(cat ${BGP_REGIONS[2]}-dual-bgp-tertiary-1c1g_ipv4.txt)"
   
-  log "All servers now have dual-stack BGP support where IPv6 is available" "INFO"
+  # No longer need a separate IPv6-only server as all servers now have dual-stack support
+  log "All servers now have dual-stack BGP support (IPv4+IPv6)" INFO
   
   # Save checkpoint after BIRD configs are deployed
   save_deployment_state $STAGE_CONFIGS_DEPLOYED "All BIRD configurations deployed to servers"
@@ -4561,12 +4757,12 @@ deploy() {
   fi
   
   echo "IPv4 BGP Servers:"
-  echo "Primary (${BGP_REGIONS[0]}): $(cat ${BGP_REGIONS[0]}-ipv4-bgp-primary-1c1g_ipv4.txt 2>/dev/null || echo "IP not found") with floating IP $(cat floating_ipv4_${BGP_REGIONS[0]}.txt 2>/dev/null || echo "IP not found")"
-  echo "Secondary (${BGP_REGIONS[1]}): $(cat ${BGP_REGIONS[1]}-ipv4-bgp-secondary-1c1g_ipv4.txt 2>/dev/null || echo "IP not found") with floating IP $(cat floating_ipv4_${BGP_REGIONS[1]}.txt 2>/dev/null || echo "IP not found")"
-  echo "Tertiary (${BGP_REGIONS[2]}): $(cat ${BGP_REGIONS[2]}-ipv4-bgp-tertiary-1c1g_ipv4.txt 2>/dev/null || echo "IP not found") with floating IP $(cat floating_ipv4_${BGP_REGIONS[2]}.txt 2>/dev/null || echo "IP not found")"
-  echo "Quaternary (${BGP_REGIONS[3]}): $(cat ${BGP_REGIONS[3]}-ipv4-bgp-quaternary-1c1g_ipv4.txt 2>/dev/null || echo "IP not found") with floating IP $(cat floating_ipv4_${BGP_REGIONS[3]}.txt 2>/dev/null || echo "IP not found")"
+  echo "Primary (Newark): $(cat ewr-ipv4-bgp-primary-1c1g_ipv4.txt) with floating IP $(cat floating_ipv4_${IPV4_REGIONS[0]}.txt)"
+  echo "Secondary (Miami): $(cat mia-ipv4-bgp-secondary-1c1g_ipv4.txt) with floating IP $(cat floating_ipv4_${IPV4_REGIONS[1]}.txt)"
+  echo "Tertiary (Chicago): $(cat ord-ipv4-bgp-tertiary-1c1g_ipv4.txt) with floating IP $(cat floating_ipv4_${IPV4_REGIONS[2]}.txt)"
   echo ""
-  echo "All servers have dual-stack IPv4/IPv6 capabilities"
+  echo "IPv6 BGP Server:"
+  echo "IPv6 Server (Los Angeles): $(cat lax-ipv6-bgp-1c1g_ipv4.txt) (IPv6: $(cat lax-ipv6-bgp-1c1g_ipv6.txt)) with floating IPv6 $(cat floating_ipv6_${IPV6_REGION}.txt)"
   echo ""
   echo "To test failover, SSH to the primary server and run: systemctl stop bird"
   echo "Then check that traffic is redirected to the secondary server."

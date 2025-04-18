@@ -2,11 +2,24 @@
 # Script to upgrade to latest BIRD version (2.16.2) from source
 source "$(dirname "$0")/.env"
 
-# Define server IPs
-EWR_IP="66.135.18.138"
-MIA_IP="149.28.108.180"
-ORD_IP="66.42.113.101"
-LAX_IP="149.248.2.74"
+# Get region information from .env file
+if [ -z "$BGP_REGION_PRIMARY" ] || [ -z "$BGP_REGION_SECONDARY" ] || [ -z "$BGP_REGION_TERTIARY" ] || [ -z "$BGP_REGION_QUATERNARY" ]; then
+  echo "Error: One or more BGP regions are not defined in .env file"
+  echo "Please ensure BGP_REGION_PRIMARY, BGP_REGION_SECONDARY, BGP_REGION_TERTIARY, and BGP_REGION_QUATERNARY are set"
+  exit 1
+fi
+
+# Define server IPs based on region configuration
+PRIMARY_IP=$(cat "$(dirname "$0")/${BGP_REGION_PRIMARY}-ipv4-bgp-primary-1c1g_ipv4.txt" 2>/dev/null)
+SECONDARY_IP=$(cat "$(dirname "$0")/${BGP_REGION_SECONDARY}-ipv4-bgp-secondary-1c1g_ipv4.txt" 2>/dev/null)
+TERTIARY_IP=$(cat "$(dirname "$0")/${BGP_REGION_TERTIARY}-ipv4-bgp-tertiary-1c1g_ipv4.txt" 2>/dev/null)
+QUATERNARY_IP=$(cat "$(dirname "$0")/${BGP_REGION_QUATERNARY}-ipv4-bgp-quaternary-1c1g_ipv4.txt" 2>/dev/null)
+
+if [ -z "$PRIMARY_IP" ] || [ -z "$SECONDARY_IP" ] || [ -z "$TERTIARY_IP" ] || [ -z "$QUATERNARY_IP" ]; then
+  echo "Error: Could not find all required IPs in IP files."
+  echo "Found: PRIMARY(${BGP_REGION_PRIMARY})=$PRIMARY_IP, SECONDARY(${BGP_REGION_SECONDARY})=$SECONDARY_IP, TERTIARY(${BGP_REGION_TERTIARY})=$TERTIARY_IP, QUATERNARY(${BGP_REGION_QUATERNARY})=$QUATERNARY_IP"
+  exit 1
+fi
 
 # Define build function
 build_bird() {
@@ -72,18 +85,18 @@ echo "Starting BIRD upgrade process to version 2.16.2..."
 echo
 
 # Ask which servers to upgrade
-read -p "Upgrade Primary (EWR) server? (y/n): " upgrade_ewr
-read -p "Upgrade Secondary (MIA) server? (y/n): " upgrade_mia
-read -p "Upgrade Tertiary (ORD) server? (y/n): " upgrade_ord
-read -p "Upgrade IPv6 (LAX) server? (y/n): " upgrade_lax
+read -p "Upgrade Primary (${BGP_REGION_PRIMARY}) server? (y/n): " upgrade_primary
+read -p "Upgrade Secondary (${BGP_REGION_SECONDARY}) server? (y/n): " upgrade_secondary
+read -p "Upgrade Tertiary (${BGP_REGION_TERTIARY}) server? (y/n): " upgrade_tertiary
+read -p "Upgrade Quaternary (${BGP_REGION_QUATERNARY}) server? (y/n): " upgrade_quaternary
 
 # Confirm before proceeding
 echo
 echo "Ready to upgrade BIRD on the following servers:"
-[[ "$upgrade_ewr" == "y" ]] && echo "- Primary (EWR): $EWR_IP"
-[[ "$upgrade_mia" == "y" ]] && echo "- Secondary (MIA): $MIA_IP"
-[[ "$upgrade_ord" == "y" ]] && echo "- Tertiary (ORD): $ORD_IP"
-[[ "$upgrade_lax" == "y" ]] && echo "- IPv6 (LAX): $LAX_IP"
+[[ "$upgrade_primary" == "y" ]] && echo "- Primary (${BGP_REGION_PRIMARY}): $PRIMARY_IP"
+[[ "$upgrade_secondary" == "y" ]] && echo "- Secondary (${BGP_REGION_SECONDARY}): $SECONDARY_IP"
+[[ "$upgrade_tertiary" == "y" ]] && echo "- Tertiary (${BGP_REGION_TERTIARY}): $TERTIARY_IP"
+[[ "$upgrade_quaternary" == "y" ]] && echo "- Quaternary (${BGP_REGION_QUATERNARY}): $QUATERNARY_IP"
 echo
 read -p "Proceed with upgrade? This will temporarily disrupt BGP sessions! (y/n): " confirm
 
@@ -93,10 +106,10 @@ if [[ "$confirm" != "y" ]]; then
 fi
 
 # Perform upgrades
-[[ "$upgrade_ewr" == "y" ]] && build_bird "$EWR_IP" "Primary (EWR)"
-[[ "$upgrade_mia" == "y" ]] && build_bird "$MIA_IP" "Secondary (MIA)"
-[[ "$upgrade_ord" == "y" ]] && build_bird "$ORD_IP" "Tertiary (ORD)"
-[[ "$upgrade_lax" == "y" ]] && build_bird "$LAX_IP" "IPv6 (LAX)"
+[[ "$upgrade_primary" == "y" ]] && build_bird "$PRIMARY_IP" "Primary (${BGP_REGION_PRIMARY})"
+[[ "$upgrade_secondary" == "y" ]] && build_bird "$SECONDARY_IP" "Secondary (${BGP_REGION_SECONDARY})"
+[[ "$upgrade_tertiary" == "y" ]] && build_bird "$TERTIARY_IP" "Tertiary (${BGP_REGION_TERTIARY})"
+[[ "$upgrade_quaternary" == "y" ]] && build_bird "$QUATERNARY_IP" "Quaternary (${BGP_REGION_QUATERNARY})"
 
 echo "BIRD upgrade process completed."
 echo "Run ./bgp_summary.sh to check BGP status with the new BIRD version."
