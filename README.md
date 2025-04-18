@@ -57,6 +57,17 @@ The script can automatically upload your SSH key to Vultr during deployment if i
 
 All servers are configured with dual-stack BGP and announce both IPv4 and IPv6 prefixes with a consistent path prepending hierarchy. You can deploy these servers in any Vultr regions worldwide by configuring the region codes in your `.env` file, allowing for global anycast distribution tailored to your needs.
 
+### BIRD 2.16.2 Implementation
+This deployment uses BIRD 2.16.2, which is built from source on each machine. Key reasons for using this specific version:
+
+1. **Enhanced IPv6 Support**: Version 2.16.2 contains critical fixes for IPv6 BGP sessions and multihop BGP
+2. **RPKI Improvements**: Better handling of RPKI validation, including more reliable ROA checks
+3. **Improved Stability**: Fixes for session flapping issues that were present in earlier versions
+4. **Path Prepending Efficiency**: More reliable AS path prepending for traffic engineering
+5. **Multi-Protocol BGP**: Better support for running IPv4 and IPv6 BGP sessions simultaneously
+
+The `upgrade_bird.sh` script provides automated installation of BIRD 2.16.2 from source with all required dependencies.
+
 ## Usage
 
 ### Initial Deployment
@@ -165,9 +176,11 @@ This deployment includes comprehensive security:
 
 2. **BGP Security**
    - RPKI validation with ARIN, RIPE, and Cloudflare validators
-   - ASPA path validation
-   - BGP password authentication
+   - ASPA path validation using Routinator and BIRD 2.16.2
+   - BGP password authentication with Vultr peer
    - Route coloring via BGP communities
+   - Path prepending for traffic engineering and controlled failover
+   - BIRD 2.16.2 security features including prefix filtering and session protection
 
 3. **System Hardening**
    - Automatic security updates
@@ -200,10 +213,12 @@ Detailed documentation is available in the "support docs" directory:
 - `add_ipv6_path_prepending.sh` - Add path prepending to IPv6 BGP sessions
 
 ### BIRD Management
-- `upgrade_bird.sh` - Upgrade BIRD to version 2.16.2 on a server
-- `upgrade_all_servers.sh` - Upgrade all servers to BIRD 2.16.2 with dual-stack
-- `fix_ipv6_bgp.sh` - Fix IPv6 BGP configuration issues
-- `test_dualstack_bird.sh` - Test dual-stack BGP functionality
+- `upgrade_bird.sh` - Upgrade BIRD to version 2.16.2 from source, including dependencies
+- `upgrade_all_servers.sh` - Upgrade all servers to BIRD 2.16.2 with dual-stack support
+- `fix_ipv6_bgp.sh` - Fix IPv6 BGP configuration issues and establish IPv6 sessions
+- `test_dualstack_bird.sh` - Test dual-stack BGP functionality (IPv4+IPv6)
+
+The BIRD 2.16.2 upgrade is essential for proper dual-stack operation. Earlier versions (like 2.0.8) have several IPv6 related issues, particularly with multihop BGP sessions and route advertisement. The upgrade process preserves your existing configuration while enhancing capabilities.
 
 ### Deployment Tools
 - `update_deploy_for_dualstack.sh` - Update deploy.sh with dual-stack support
