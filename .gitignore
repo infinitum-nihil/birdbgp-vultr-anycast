@@ -25,3 +25,6 @@ Thumbs.db
 .idea/
 *.swp
 *~
+# Artifact directories
+/tobedeleted/
+/artifacts_archive/
