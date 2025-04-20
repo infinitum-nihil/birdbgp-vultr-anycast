@@ -1,0 +1,42 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Region Configuration Guide
+
+## Available Regions
+The deployment can be configured for any Vultr region that supports BGP. Current regions in use:
+- LAX (Los Angeles) - Primary
+- EWR (Newark) - IPv4 Secondary
+- MIA (Miami) - IPv4 Tertiary
+- ORD (Chicago) - IPv4 Quaternary
+
+## Changing Regions
+To deploy in different regions:
+1. Update [.env](mdc:.env) with new region codes
+2. Region variables:
+   ```
+   BGP_REGION_PRIMARY=lax    # Can be changed to any region
+   BGP_REGION_SECONDARY=ewr  # Can be changed to any region
+   BGP_REGION_TERTIARY=mia   # Can be changed to any region
+   BGP_REGION_QUATERNARY=ord # Can be changed to any region
+   ```
+
+## Region Support Files
+Region-specific files are generated during deployment:
+- `{region}-ipv4_floating_ip.txt` - Floating IP for each region
+- `{region}-ipv6_floating_ip.txt` - IPv6 addresses (if dual-stack)
+- `{region}-ipv4-{role}_bird.conf` - BIRD configuration files
+
+## Deployment Scripts
+Region configuration is handled by:
+- [deploy.sh](mdc:deploy.sh) - Main deployment script
+- [reassign_bgp_roles.sh](mdc:reassign_bgp_roles.sh) - Change region roles
+- [check_bgp_status.sh](mdc:check_bgp_status.sh) - Verify BGP status per region
+
+## Important Notes
+1. All regions must support BGP and be enabled in your Vultr account
+2. Path prepending is automatically configured based on region role
+3. Regions can be in any geographic location (not limited to Americas)
+4. IPv6 support varies by region - verify availability before deployment

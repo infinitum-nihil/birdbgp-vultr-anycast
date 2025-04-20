@@ -1,0 +1,156 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BGP Cloud Configuration Schema",
+  "description": "Schema for validating BGP cloud provider configurations",
+  "type": "object",
+  "required": ["version", "last_updated", "cloud_providers", "global_metadata"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date"
+    },
+    "cloud_providers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["servers", "authentication", "metadata"],
+        "properties": {
+          "servers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "ipv4": {
+                    "type": "object",
+                    "required": ["address", "role", "last_updated"],
+                    "properties": {
+                      "address": {
+                        "type": "string",
+                        "format": "ipv4"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": ["primary", "secondary", "tertiary", "quaternary", "backup"]
+                      },
+                      "last_updated": {
+                        "type": "string",
+                        "format": "date"
+                      }
+                    }
+                  },
+                  "ipv6": {
+                    "type": "object",
+                    "required": ["address", "role", "last_updated"],
+                    "properties": {
+                      "address": {
+                        "type": "string",
+                        "format": "ipv6"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": ["primary", "secondary", "tertiary", "quaternary", "backup"]
+                      },
+                      "last_updated": {
+                        "type": "string",
+                        "format": "date"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "authentication": {
+            "type": "object",
+            "required": ["last_rotated"],
+            "properties": {
+              "ssh_key_id": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+              },
+              "access_key_id": {
+                "type": "string",
+                "pattern": "^AKIA[A-Z0-9]{16}$"
+              },
+              "secret_access_key": {
+                "type": "string",
+                "minLength": 40
+              },
+              "last_rotated": {
+                "type": "string",
+                "format": "date"
+              }
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "required": ["provider_type", "api_version"],
+            "properties": {
+              "provider_type": {
+                "type": "string",
+                "enum": ["cloud", "baremetal", "hybrid"]
+              },
+              "api_version": {
+                "type": "string"
+              },
+              "region_mapping": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "global_metadata": {
+      "type": "object",
+      "required": ["schema_version", "maintainer", "description", "deployment_strategy"],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "maintainer": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "last_audit": {
+          "type": "string",
+          "format": "date"
+        },
+        "deployment_strategy": {
+          "type": "string",
+          "enum": ["active-active", "active-passive", "hybrid"]
+        },
+        "failover_config": {
+          "type": "object",
+          "required": ["primary", "secondary"],
+          "properties": {
+            "primary": {
+              "type": "string"
+            },
+            "secondary": {
+              "type": "string"
+            },
+            "tertiary": {
+              "type": "string"
+            },
+            "quaternary": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+} 

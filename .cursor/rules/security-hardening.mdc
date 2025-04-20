@@ -1,0 +1,215 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Security and Hardening Guide
+
+## BGP Security
+1. **Password Protection**
+   - BGP passwords stored in [.env](mdc:.env)
+   - Never hardcode in BIRD configuration
+   - Example usage:
+   ```bird
+   protocol bgp vultr4 {
+       password "${VULTR_BGP_PASSWORD}";  # From environment
+   }
+   ```
+
+2. **RPKI Validation**
+   - Configured in BIRD for route validation
+   - Example configuration:
+   ```bird
+   protocol rpki rpki_vultr {
+       remote "${RPKI_SERVER}" port 3323;
+       retry keep 90;
+       refresh keep 900;
+       expire keep 172800;
+   }
+   ```
+
+## Network Security
+1. **Firewall Configuration**
+   - Allow only necessary BGP ports
+   - Example in [fix_web_access.sh](mdc:fix_web_access.sh):
+   ```bash
+   # Allow BGP from Vultr
+   iptables -A INPUT -p tcp --dport 179 -s 169.254.169.254 -j ACCEPT
+   ip6tables -A INPUT -p tcp --dport 179 -j ACCEPT
+   ```
+
+2. **DDoS Protection**
+   - RTBH (Remote Triggered Black Hole) configuration
+   - Example in BIRD:
+   ```bird
+   protocol static {
+       route ${BLACKHOLE_PREFIX} blackhole;
+   }
+   ```
+
+## Server Hardening
+1. **SSH Security**
+   - Key-based authentication only
+   - Example configuration:
+   ```bash
+   # In deploy.sh
+   SSH_OPTIONS="-o StrictHostKeyChecking=no -i ${SSH_KEY_PATH}"
+   ```
+
+2. **Service Hardening**
+   - BIRD runs as non-root user
+   - Limited file permissions
+   - Example setup:
+   ```bash
+   # Set BIRD permissions
+   chown -R bird:bird /etc/bird
+   chmod 640 /etc/bird/bird.conf
+   ```
+
+## Monitoring and Logging
+1. **BIRD Logging**
+   ```bird
+   log "/var/log/bird/bird.log" { 
+       debug "auth";        # Authentication
+       info "state";        # Protocol state changes
+       warning;            # Warning messages
+       error;              # Error messages
+       fatal;              # Fatal errors
+   }
+   ```
+
+2. **System Logging**
+   - Monitor auth.log for SSH attempts
+   - Track BGP session changes
+   - Example log monitoring:
+   ```bash
+   tail -f /var/log/bird/bird.log | grep "BGP"
+   ```
+
+## Important Files
+1. **Security Configuration**
+   - [fix_bgp_password.sh](mdc:fix_bgp_password.sh)
+   - [fix_web_access.sh](mdc:fix_web_access.sh)
+   - [fix_vultr_bgp.sh](mdc:fix_vultr_bgp.sh)
+
+2. **Monitoring Scripts**
+   - [check_bgp_status.sh](mdc:check_bgp_status.sh)
+   - [check_bgp_status_updated.sh](mdc:check_bgp_status_updated.sh)
+
+## Best Practices
+1. Never commit sensitive data to git
+2. Use environment variables for all secrets
+3. Regularly update BIRD and system packages
+4. Monitor BGP session states and logs
+5. Keep backups of configuration files
+
+## SSH Access Configuration
+1. **SSH Security Settings** (from cloud-init)
+   ```bash
+   # /etc/ssh/sshd_config.d/10-security.conf
+   PermitRootLogin prohibit-password
+   PasswordAuthentication no
+   X11Forwarding no
+   MaxAuthTries 3
+   LoginGraceTime 20
+   AllowAgentForwarding no
+   AllowTcpForwarding no
+   PermitEmptyPasswords no
+   ```
+
+2. **Firewall Rules for SSH**
+   ```bash
+   # Allow SSH (port 22) with rate limiting
+   iptables -A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --set
+   iptables -A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 4 -j DROP
+   iptables -A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -j ACCEPT
+   ```
+
+## CrowdSec Implementation
+1. **Installation** (from cloud-init)
+   ```bash
+   # Install CrowdSec and bouncer
+   curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash
+   apt-get install -y crowdsec crowdsec-firewall-bouncer-iptables
+   ```
+
+2. **Default Collections**
+   ```bash
+   # Install security collections
+   cscli collections install crowdsecurity/linux
+   cscli collections install crowdsecurity/sshd
+   cscli collections install crowdsecurity/iptables
+   ```
+
+3. **Service Configuration**
+   ```bash
+   # Enable services
+   systemctl enable --now crowdsec
+   systemctl enable --now crowdsec-firewall-bouncer
+   ```
+
+## Fail2ban Integration
+1. **Configuration** (/etc/fail2ban/jail.local)
+   ```bash
+   [DEFAULT]
+   bantime = 86400
+   findtime = 3600
+   maxretry = 5
+   banaction = iptables-multiport
+
+   [sshd]
+   enabled = true
+   port = ssh
+   filter = sshd
+   logpath = /var/log/auth.log
+   maxretry = 3
+   ```
+
+## Firewall Rules
+1. **Base Rules**
+   ```bash
+   iptables -A INPUT -i lo -j ACCEPT
+   iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+   iptables -A INPUT -p tcp --dport 22 -j ACCEPT  # SSH
+   iptables -A INPUT -p tcp --dport 179 -j ACCEPT # BGP
+   iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT
+   ```
+
+2. **RPKI Validation**
+   ```bash
+   # RPKI validator IPs - restrict port 323
+   iptables -A INPUT -p tcp --dport 323 -s 192.5.4.1 -j ACCEPT     # ARIN
+   iptables -A INPUT -p tcp --dport 323 -s 193.0.24.0/24 -j ACCEPT # RIPE
+   iptables -A INPUT -p tcp --dport 323 -s 1.1.1.1 -j ACCEPT       # Cloudflare
+   iptables -A INPUT -p tcp --dport 323 -s 1.0.0.1 -j ACCEPT       # Cloudflare
+   ```
+
+## System Hardening
+1. **Sysctl Security Settings**
+   ```bash
+   # BGP security settings in /etc/sysctl.d/99-bgp-security.conf
+   net.ipv4.conf.all.rp_filter=0
+   net.ipv4.conf.default.rp_filter=0
+   net.ipv4.conf.lo.rp_filter=0
+   net.ipv4.conf.all.accept_redirects=0
+   net.ipv4.conf.default.accept_redirects=0
+   net.ipv4.conf.all.secure_redirects=0
+   net.ipv4.conf.default.secure_redirects=0
+   net.ipv4.conf.all.send_redirects=0
+   net.ipv4.conf.default.send_redirects=0
+   ```
+
+## Important Notes
+1. SSH access is maintained but secured:
+   - Key-based authentication only
+   - Rate limiting via iptables
+   - Protected by both Fail2ban and CrowdSec
+2. CrowdSec provides:
+   - Real-time threat detection
+   - Automatic IP blocking
+   - Multiple security collections
+3. Security is multi-layered:
+   - Firewall (iptables)
+   - Intrusion Prevention (CrowdSec)
+   - Brute-force Protection (Fail2ban)
+   - System Hardening (sysctl)

@@ -1,0 +1,75 @@
+#!/bin/bash
+# Script to fix anycast IP forwarding to Docker container
+# Created by Claude
+
+# Source .env file to get SSH key path
+source "$(dirname "$0")/.env"
+
+# LAX server IP
+LAX_IP="149.248.2.74"
+
+echo "Fixing anycast IP forwarding on LAX server ($LAX_IP)..."
+ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@$LAX_IP << 'EOF'
+# Create NAT rules to forward traffic from anycast IP to the Docker container
+echo "Setting up NAT rules for anycast IP..."
+
+# Clear any conflicting rules
+iptables -t nat -F PREROUTING
+
+# Add DNAT rule to forward port 80 on anycast IP to Docker container port 8001
+iptables -t nat -A PREROUTING -d 192.30.120.10/32 -p tcp -m tcp --dport 80 -j DNAT --to-destination 127.0.0.1:8001
+iptables -t nat -A PREROUTING -d 192.30.120.10/32 -p tcp -m tcp --dport 443 -j DNAT --to-destination 127.0.0.1:8001
+
+# Also add rules for the server's regular IPs
+iptables -t nat -A PREROUTING -d 149.248.2.74/32 -p tcp -m tcp --dport 80 -j DNAT --to-destination 127.0.0.1:8001
+iptables -t nat -A PREROUTING -d 45.76.76.125/32 -p tcp -m tcp --dport 80 -j DNAT --to-destination 127.0.0.1:8001
+
+# Enable IP forwarding
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+
+# Make sure the firewall allows forwarded packets
+iptables -P FORWARD ACCEPT
+
+# Save iptables rules
+echo "Saving iptables rules..."
+iptables-save > /etc/iptables/rules.v4 || {
+  mkdir -p /etc/iptables
+  iptables-save > /etc/iptables/rules.v4
+}
+
+# Verify rules
+echo "Verifying NAT rules:"
+iptables -t nat -L PREROUTING -v -n
+
+# Test local access
+echo "Testing local access to anycast IP:"
+curl -v http://192.30.120.10 || echo "Failed to connect locally"
+
+echo "Setting up docker container to listen on all interfaces..."
+docker inspect hyperglass | grep -A 10 PortBindings
+
+# Remove and recreate the container to listen on all interfaces
+docker stop hyperglass
+docker rm hyperglass
+
+# Create a networking config file for the new container
+cat > /opt/network-config.json << 'EOC'
+{
+  "NetworkMode": "host"
+}
+EOC
+
+# Run hyperglass in host network mode
+docker run -d --name hyperglass \
+  --network host \
+  --restart=unless-stopped \
+  -v /opt/hyperglass/config:/config \
+  nginx:alpine
+
+# Verify new container
+docker ps
+EOF
+
+echo "Anycast IP forwarding has been fixed on LAX server."
+echo "Try accessing lg.infinitum-nihil.com in your browser now."

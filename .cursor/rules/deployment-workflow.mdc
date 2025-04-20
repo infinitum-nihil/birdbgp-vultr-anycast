@@ -1,0 +1,83 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Deployment and Monitoring Guide
+
+## Deployment Workflow
+The deployment process follows these steps:
+
+1. **Initial Setup**
+   - [deploy.sh](mdc:deploy.sh) reads configuration from [.env](mdc:.env)
+   - Validates environment variables and prerequisites
+   - Creates deployment state file [deployment_state.json](mdc:deployment_state.json)
+
+2. **Server Deployment**
+   - Creates instances in configured regions
+   - Assigns floating IPs
+   - Configures networking and security
+
+3. **BGP Configuration**
+   - Generates BIRD configs using environment variables
+   - Deploys configs to each server
+   - Sets up path prepending based on region role
+
+4. **Validation**
+   - [check_bgp_status.sh](mdc:check_bgp_status.sh) verifies BGP sessions
+   - Confirms route announcements
+   - Validates path prepending
+
+## Monitoring Tools
+
+### BGP Status Check
+```bash
+# Check all BGP sessions
+./check_bgp_status.sh
+
+# Expected output:
+Primary (LAX, 0x prepend): Connected
+Secondary (EWR, 1x prepend): Connected
+Tertiary (MIA, 2x prepend): Connected
+Quaternary (ORD, 2x prepend): Connected
+```
+
+### Route Verification
+```bash
+# Verify route announcements
+./check_bgp_status_updated.sh
+
+# Expected output shows:
+- Announced routes
+- Path prepending status
+- BGP neighbor state
+```
+
+## Deployment Files
+Key files generated during deployment:
+```
+{region}-ipv4_floating_ip.txt       # Floating IP addresses
+{region}-ipv4-{role}_bird.conf      # BIRD configurations
+deployment_state.json               # Current deployment state
+birdbgp_deploy_*.log               # Deployment logs
+```
+
+## Troubleshooting
+Common issues and solutions:
+1. BGP Session Down
+   - Check [fix_bgp_password.sh](mdc:fix_bgp_password.sh)
+   - Verify [fix_vultr_bgp.sh](mdc:fix_vultr_bgp.sh)
+
+2. Route Announcement Issues
+   - Use [fix_anycast_routing.sh](mdc:fix_anycast_routing.sh)
+   - Check [fix_bird.sh](mdc:fix_bird.sh)
+
+3. Path Prepending Problems
+   - Verify [add_path_prepending.sh](mdc:add_path_prepending.sh)
+   - Check region role configuration
+
+## Important Notes
+1. Always use [check_bgp_status.sh](mdc:check_bgp_status.sh) after changes
+2. Monitor logs in `/var/log/bird/`
+3. Keep [deployment_state.json](mdc:deployment_state.json) backed up
+4. Use [reassign_bgp_roles.sh](mdc:reassign_bgp_roles.sh) for role changes

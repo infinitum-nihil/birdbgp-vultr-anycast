@@ -1,0 +1,110 @@
+#!/bin/bash
+# Script to fix Hyperglass socket permissions
+
+# Source environment variables
+source "$(dirname "$0")/.env"
+
+# LAX server IP
+LAX_IP=$(cat "$(dirname "$0")/lax-ipv6-bgp-1c1g_ipv4.txt" 2>/dev/null)
+
+# Create fix script
+cat > /tmp/fix_socket_permissions.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "Checking BIRD socket path and permissions..."
+ls -la /var/run/bird.ctl || echo "Socket not found at /var/run/bird.ctl"
+ls -la /var/run/bird/ || echo "No files in /var/run/bird/"
+ls -la /var/run/bird/bird.ctl || echo "Socket not found at /var/run/bird/bird.ctl"
+
+echo "Fixing BIRD socket permissions..."
+chown -R bird:bird /var/run/bird/
+chmod -R 775 /var/run/bird/
+
+echo "Updating hyperglass-bird script..."
+cat > /usr/local/bin/hyperglass-bird << 'BIRDSCRIPT'
+#!/bin/bash
+# Updated script to proxy hyperglass commands to BIRD socket
+
+# Check both possible socket locations
+if [ -S "/var/run/bird.ctl" ]; then
+  BIRD_SOCKET="/var/run/bird.ctl"
+elif [ -S "/var/run/bird/bird.ctl" ]; then
+  BIRD_SOCKET="/var/run/bird/bird.ctl"
+else
+  echo "Error: BIRD socket not found in standard locations"
+  exit 1
+fi
+
+# Get command from stdin 
+read -r command
+
+# Pass to BIRD socket with error handling
+echo "$command" | socat -t 5 - UNIX-CONNECT:$BIRD_SOCKET 2>/dev/null || 
+  echo "Error: Failed to connect to BIRD socket"
+BIRDSCRIPT
+
+chmod +x /usr/local/bin/hyperglass-bird
+
+echo "Testing BIRD socket proxy..."
+if [ -e "/var/run/bird.ctl" ] || [ -e "/var/run/bird/bird.ctl" ]; then
+    echo "show status" | /usr/local/bin/hyperglass-bird
+else
+    echo "No BIRD socket found in standard locations"
+fi
+
+echo "Restarting BIRD service..."
+systemctl restart bird
+
+echo "Restarting Hyperglass container..."
+docker stop hyperglass
+docker rm hyperglass
+
+# Create new Hyperglass container with proper socket access
+cat > /opt/hyperglass/docker-compose.yml << 'DOCKER'
+services:
+  hyperglass:
+    image: hyperglass-hyperglass
+    container_name: hyperglass
+    restart: unless-stopped
+    networks:
+      - proxy
+    ports:
+      - "8001:8001"
+    volumes:
+      - /etc/hyperglass:/etc/hyperglass:ro
+      - /var/run/bird:/var/run/bird:ro
+      - /usr/local/bin/hyperglass-bird:/usr/local/bin/hyperglass-bird:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hyperglass-sub.rule=Host(`lg.infinitum-nihil.com`)"
+      - "traefik.http.routers.hyperglass-sub.entrypoints=websecure"
+      - "traefik.http.routers.hyperglass-sub.tls.certresolver=letsencrypt"
+      - "traefik.http.services.hyperglass.loadbalancer.server.port=8001"
+    environment:
+      - HYPERGLASS_CONFIG_DIR=/etc/hyperglass
+
+networks:
+  proxy:
+    external: true
+DOCKER
+
+cd /opt/hyperglass
+docker compose up -d
+
+echo "Checking container status..."
+docker ps
+
+echo "BIRD socket permissions and path fixed"
+EOF
+
+chmod +x /tmp/fix_socket_permissions.sh
+
+# Upload and execute on LAX server
+echo "Uploading socket fix script to LAX server..."
+scp -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" /tmp/fix_socket_permissions.sh root@$LAX_IP:/tmp/fix_socket_permissions.sh
+
+echo "Executing socket fix script on LAX server..."
+ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@$LAX_IP "bash /tmp/fix_socket_permissions.sh"
+
+echo "Socket permissions fixed"

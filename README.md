@@ -217,6 +217,9 @@ Detailed documentation is available in the "support docs" directory:
 - `upgrade_all_servers.sh` - Upgrade all servers to BIRD 2.16.2 with dual-stack support
 - `fix_ipv6_bgp.sh` - Fix IPv6 BGP configuration issues and establish IPv6 sessions
 - `test_dualstack_bird.sh` - Test dual-stack BGP functionality (IPv4+IPv6)
+- `fix_bgp_full.sh` - Comprehensive script to fix all BGP configuration issues
+- `verify_bgp_config.sh` - Verify and fix BGP neighbor configuration (169.254.169.254 for IPv4, 2001:19f0:ffff::1 for IPv6)
+- `fix_device_routes.sh` - Convert blackhole routes to device routes for proper anycast IP announcement
 
 The BIRD 2.16.2 upgrade is essential for proper dual-stack operation. Earlier versions (like 2.0.8) have several IPv6 related issues, particularly with multihop BGP sessions and route advertisement. The upgrade process preserves your existing configuration while enhancing capabilities.
 

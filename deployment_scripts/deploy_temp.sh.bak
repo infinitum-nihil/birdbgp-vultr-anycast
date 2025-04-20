@@ -1,0 +1,133 @@
+#!/bin/bash
+
+# Use noninteractive mode for package installation
+export DEBIAN_FRONTEND=noninteractive
+
+# Source environment variables
+source "$(dirname "$0")/.env"
+
+# Server information
+PRIMARY_IP=$(cat "$HOME/birdbgp/lax-ipv6-bgp-1c1g_ipv4.txt" 2>/dev/null)
+SECONDARY_IP=$(cat "$HOME/birdbgp/ewr-ipv4-bgp-primary-1c1g_ipv4.txt" 2>/dev/null)
+TERTIARY_IP=$(cat "$HOME/birdbgp/mia-ipv4-bgp-secondary-1c1g_ipv4.txt" 2>/dev/null)
+QUATERNARY_IP=$(cat "$HOME/birdbgp/ord-ipv4-bgp-tertiary-1c1g_ipv4.txt" 2>/dev/null)
+
+# Anycast IPs to assign
+ANYCAST_IPV4="192.30.120.10"
+ANYCAST_IPV6="2620:71:4000::c01e:780a"
+
+# Domain and DNS settings
+DOMAIN="infinitum-nihil.com"
+DNS_PROVIDER="${DNS_PROVIDER:-dnsmadeeasy}"
+DNS_API_KEY="${DNS_API_KEY:-145af300-0ad0-4268-b1be-950378546dee}"
+
+# Text formatting
+BOLD="\033[1m"
+RESET="\033[0m"
+GREEN="\033[32m"
+YELLOW="\033[33m"
+RED="\033[31m"
+
+# Check for DNSMadeEasy API Secret in .env or ask for it
+if [ -z "$DNS_API_SECRET" ]; then
+    # Check if it's in the .env file but not loaded
+    if grep -q "^DNS_API_SECRET=" "$(dirname "$0")/.env"; then
+        DNS_API_SECRET=$(grep "^DNS_API_SECRET=" "$(dirname "$0")/.env" | cut -d= -f2)
+    else
+        # Not in .env, prompt for it
+        read -p "Enter DNSMadeEasy API Secret: " DNS_API_SECRET
+        if [ -z "$DNS_API_SECRET" ]; then
+            echo -e "${RED}Error: DNSMadeEasy API Secret is required.${RESET}"
+            exit 1
+        fi
+        
+        # Save it to .env for future use
+        echo "DNS_API_SECRET=$DNS_API_SECRET" >> "$(dirname "$0")/.env"
+        echo -e "${GREEN}Added DNS_API_SECRET to .env file${RESET}"
+    fi
+fi
+
+echo "======================================="
+echo -e "${GREEN}Primary (LAX):${RESET} $PRIMARY_IP"
+echo -e "${GREEN}Secondary (EWR):${RESET} $SECONDARY_IP"
+echo -e "${GREEN}Tertiary (MIA):${RESET} $TERTIARY_IP"
+echo -e "${GREEN}Quaternary (ORD):${RESET} $QUATERNARY_IP"
+echo "======================================="
+echo "Assigning Anycast IPs: $ANYCAST_IPV4 and $ANYCAST_IPV6"
+echo "Domain name: $DOMAIN"
+echo "DNS Provider: $DNS_PROVIDER"
+echo ""
+
+# Function to deploy to a server
+deploy_to_server() {
+    local server_ip=$1
+    local server_name=$2
+    local region=$3
+    
+    echo -e "${BOLD}Deploying to $server_name ($region) - $server_ip...${RESET}"
+    
+    # Create the deployment script
+    cat > /tmp/server_setup.sh << 'SETUP'
+#!/bin/bash
+set -e
+
+# Configuration variables
+ANYCAST_IPV4="$ANYCAST_IPV4"
+ANYCAST_IPV6="$ANYCAST_IPV6"
+DOMAIN="$DOMAIN"
+OUR_AS="$OUR_AS"
+DNS_PROVIDER="$DNS_PROVIDER"
+DNS_API_KEY="$DNS_API_KEY"
+DNS_API_SECRET="$DNS_API_SECRET"
+
+# Set noninteractive mode
+export DEBIAN_FRONTEND=noninteractive
+
+echo "[1] Updating system packages..."
+apt update && DEBIAN_FRONTEND=noninteractive apt upgrade -y
+
+echo "[2] Installing prerequisites..."
+# Pre-configure iptables-persistent
+echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
+echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
+
+# Install required packages
+DEBIAN_FRONTEND=noninteractive apt install -y \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    software-properties-common \
+    git \
+    iptables-persistent \
+    netfilter-persistent \
+    jq
+
+echo "[3] Setting up anycast IP addresses..."
+# Get main interface name
+MAIN_INTERFACE=$(ip -br l | grep -v -E '(lo|veth|docker|dummy)' | awk '{print $1}')
+
+# Create dummy interface if not exists
+if ! ip link show dummy0 &>/dev/null; then
+    echo "Creating dummy0 interface"
+    modprobe dummy
+    ip link add dummy0 type dummy
+    ip link set dummy0 up
+    echo "dummy" > /etc/modules-load.d/dummy.conf
+fi
+
+# Add anycast IPs to dummy interface
+ip addr add $ANYCAST_IPV4/32 dev dummy0 2>/dev/null || echo "IPv4 anycast IP already exists"
+ip -6 addr add $ANYCAST_IPV6/128 dev dummy0 2>/dev/null || echo "IPv6 anycast IP already exists"
+
+# Configure netplan
+mkdir -p /etc/netplan
+cat > /etc/netplan/60-anycast.yaml << EOF
+network:
+  version: 2
+  ethernets:
+    dummy0:
+      match:
+        name: dummy0
+      addresses:
+        - $ANYCAST_IPV4/32
+        - $ANYCAST_IPV6/128
