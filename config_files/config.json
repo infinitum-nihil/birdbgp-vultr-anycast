@@ -1,0 +1,75 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2024-04-20",
+  "cloud_providers": {
+    "vultr": {
+      "servers": {
+        "us-west": {
+          "lax": {
+            "ipv4": {
+              "address": "149.248.2.74",
+              "role": "primary",
+              "last_updated": "2024-04-20"
+            },
+            "ipv6": {
+              "address": "2001:19f0:6001:48e4:5400:2ff:fe9a:1c2e",
+              "role": "primary",
+              "last_updated": "2024-04-20"
+            }
+          }
+        },
+        "us-east": {
+          "ewr": {
+            "ipv4": {
+              "address": "149.28.72.123",
+              "role": "secondary",
+              "last_updated": "2024-04-20"
+            }
+          },
+          "mia": {
+            "ipv4": {
+              "address": "149.28.72.123",
+              "role": "tertiary",
+              "last_updated": "2024-04-20"
+            }
+          }
+        },
+        "us-central": {
+          "ord": {
+            "ipv4": {
+              "address": "149.28.72.123",
+              "role": "quaternary",
+              "last_updated": "2024-04-20"
+            }
+          }
+        }
+      },
+      "authentication": {
+        "ssh_key_id": "fc6daf16-e902-40f6-b586-f4bdc83cd862",
+        "last_rotated": "2024-04-20"
+      },
+      "metadata": {
+        "provider_type": "cloud",
+        "api_version": "v2",
+        "region_mapping": {
+          "us-west": "Los Angeles",
+          "us-east": "New Jersey",
+          "us-central": "Chicago"
+        }
+      }
+    }
+  },
+  "global_metadata": {
+    "schema_version": "1.0.0",
+    "maintainer": "System Administrator",
+    "description": "BGP server configuration and authentication details",
+    "last_audit": "2024-04-20",
+    "deployment_strategy": "active-active",
+    "failover_config": {
+      "primary": "vultr.us-west.lax",
+      "secondary": "vultr.us-east.ewr",
+      "tertiary": "vultr.us-east.mia",
+      "quaternary": "vultr.us-central.ord"
+    }
+  }
+} 

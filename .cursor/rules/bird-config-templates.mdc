@@ -1,0 +1,120 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# BIRD Configuration Templates
+
+## Standard IPv4 Configuration Template
+```bird
+# BIRD Configuration Template with Environment Variables
+router id ${ROUTER_ID};  # Should use $ROUTER_ID from env
+log syslog { info, remote, warning, error, auth, fatal, bug };
+
+# Protocol for device handling
+protocol device {
+    scan time 10;
+}
+
+# Direct protocol for interface handling
+protocol direct {
+    ipv4;
+    interface "dummy*";
+}
+
+# Static routes for announcements
+protocol static {
+    ipv4 {
+        export all;
+    };
+    # Use environment variable for route
+    route ${OUR_IPV4_BGP_RANGE} via "dummy0";
+}
+
+# BGP protocol configuration
+protocol bgp vultr4 {
+    local as ${OUR_AS};        # From OUR_AS env var
+    neighbor 169.254.169.254 as 64515;
+    password "${VULTR_BGP_PASSWORD}";  # From env
+    multihop 2;
+    
+    ipv4 {
+        # Path prepending based on region role
+        export where source = RTS_STATIC {
+            if ${REGION_ROLE} = "secondary" then {
+                bgp_path.prepend(${OUR_AS});
+            }
+            if ${REGION_ROLE} = "tertiary" then {
+                bgp_path.prepend(${OUR_AS});
+                bgp_path.prepend(${OUR_AS});
+            }
+            accept;
+        };
+        import all;
+    };
+}
+```
+
+## Standard IPv6 Configuration Template
+```bird
+# IPv6 BIRD Configuration Template
+router id ${ROUTER_ID};  # Should use $ROUTER_ID from env
+log syslog { info, remote, warning, error, auth, fatal, bug };
+
+protocol device {
+    scan time 10;
+}
+
+protocol direct {
+    ipv6;
+    interface "dummy*";
+}
+
+protocol static {
+    ipv6 {
+        export all;
+    };
+    # Use environment variable for route
+    route ${OUR_IPV6_BGP_RANGE} via "dummy0";
+}
+
+protocol bgp vultr6 {
+    local as ${OUR_AS};
+    neighbor ${IPV6_NEIGHBOR} as 64515;  # Use env var for neighbor
+    password "${VULTR_BGP_PASSWORD}";
+    multihop 2;
+    
+    ipv6 {
+        export where source = RTS_STATIC;
+        import all;
+    };
+}
+```
+
+## Configuration Generation
+The templates should be processed by [setup_bird.sh](mdc:setup_bird.sh) which:
+1. Reads environment variables from [.env](mdc:.env)
+2. Substitutes variables in the template
+3. Validates the configuration
+4. Deploys to the appropriate server
+
+## Important Variables
+Essential environment variables for BIRD configuration:
+```bash
+# BGP Configuration
+OUR_AS=                    # Your ASN
+VULTR_BGP_PASSWORD=        # BGP peering password
+OUR_IPV4_BGP_RANGE=       # IPv4 range to announce
+OUR_IPV6_BGP_RANGE=       # IPv6 range to announce
+
+# Region Configuration
+BGP_REGION_PRIMARY=lax     # Primary region
+BGP_REGION_SECONDARY=ewr   # Secondary region
+BGP_REGION_TERTIARY=mia    # Tertiary region
+BGP_REGION_QUATERNARY=ord  # Quaternary region
+
+# Server-specific Configuration
+ROUTER_ID=                 # Unique router ID per server
+IPV6_NEIGHBOR=            # IPv6 neighbor address
+REGION_ROLE=              # primary/secondary/tertiary/quaternary
+```

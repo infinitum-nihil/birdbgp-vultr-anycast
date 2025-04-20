@@ -1,0 +1,38 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# BGP Configuration Guide
+
+## Environment Variables
+The BGP configuration relies on environment variables defined in [.env](mdc:.env) (not tracked in git for security). Key variables include:
+- `BGP_REGION_PRIMARY` - Primary region (currently LAX)
+- `BGP_REGION_SECONDARY` - Secondary region
+- `BGP_REGION_TERTIARY` - Tertiary region
+- `BGP_REGION_QUATERNARY` - Quaternary region
+- `VULTR_BGP_PASSWORD` - BGP peering password
+- `OUR_AS` - Our BGP AS number
+- `OUR_IPV4_BGP_RANGE` - IPv4 range to announce
+- `OUR_IPV6_BGP_RANGE` - IPv6 range to announce
+
+## Configuration Files
+The BIRD configuration files should be generated using variables from .env:
+- [lax-ipv6_bird.conf](mdc:lax-ipv6_bird.conf) - Primary region (LAX) IPv6 config
+- [ewr-ipv4-primary_bird.conf](mdc:ewr-ipv4-primary_bird.conf) - EWR region IPv4 config
+- [mia-ipv4-secondary_bird.conf](mdc:mia-ipv4-secondary_bird.conf) - MIA region IPv4 config
+- [ord-ipv4-tertiary_bird.conf](mdc:ord-ipv4-tertiary_bird.conf) - ORD region IPv4 config
+
+## Deployment Scripts
+Key deployment scripts:
+- [deploy.sh](mdc:deploy.sh) - Main deployment script
+- [setup_bird.sh](mdc:setup_bird.sh) - BIRD configuration setup
+- [update_deploy_for_dualstack.sh](mdc:update_deploy_for_dualstack.sh) - Dual-stack configuration
+
+## Important Notes
+1. All BIRD configurations should use environment variables instead of hardcoded values
+2. Region configuration is flexible and can be changed via .env
+3. Path prepending is configured based on region role:
+   - Primary (LAX): No prepending
+   - Secondary: 1x prepend
+   - Tertiary/Quaternary: 2x prepend

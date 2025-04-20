@@ -1,0 +1,38 @@
+DNS RECORD CREATION INSTRUCTIONS
+
+Domain: infinitum-nihil.com
+Anycast IPv4: 192.30.120.10
+Anycast IPv6: 2620:71:4000::c01e:780a
+
+DNS RECORDS TO CREATE:
+1. A Record
+   Hostname: lg
+   Value: 192.30.120.10
+   TTL: 300 seconds
+   Result: lg.infinitum-nihil.com -> 192.30.120.10
+
+2. AAAA Record
+   Hostname: lg
+   Value: 2620:71:4000::c01e:780a
+   TTL: 300 seconds
+   Result: lg.infinitum-nihil.com -> 2620:71:4000::c01e:780a
+
+3. A Record
+   Hostname: traefik
+   Value: 192.30.120.10
+   TTL: 300 seconds
+   Result: traefik.infinitum-nihil.com -> 192.30.120.10
+
+4. AAAA Record
+   Hostname: traefik
+   Value: 2620:71:4000::c01e:780a
+   TTL: 300 seconds
+   Result: traefik.infinitum-nihil.com -> 2620:71:4000::c01e:780a
+
+After DNS propagation:
+- Hyperglass: https://lg.infinitum-nihil.com
+- Traefik: https://traefik.infinitum-nihil.com
+
+Check DNS propagation:
+  host lg.infinitum-nihil.com
+  host traefik.infinitum-nihil.com
