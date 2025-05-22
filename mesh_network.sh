@@ -45,10 +45,10 @@ declare -A IPV6_IPS=(
 )
 
 declare -A SERVER_ROLES=(
-  ["ewr"]="primary"
-  ["mia"]="secondary"
-  ["ord"]="tertiary"
-  ["lax"]="primary-ipv6"
+  ["lax"]="primary"
+  ["ord"]="secondary" # Chicago - closest to LA
+  ["mia"]="tertiary"  # Miami - farther from LA
+  ["ewr"]="quaternary" # Newark - farthest from LA
 )
 
 # WireGuard subnet and port
@@ -162,7 +162,8 @@ configure_ibgp() {
   local ip=${PUBLIC_IPS[$server]}
   local is_route_reflector=0
   
-  # LAX will be our route reflector
+  # LAX (Los Angeles) will be our route reflector since it's the primary node
+  # This makes sense geographically as the company is headquartered in LA
   if [ "$server" == "lax" ]; then
     is_route_reflector=1
   fi
@@ -237,12 +238,12 @@ install_looking_glass() {
   local server=$1
   local ip=${PUBLIC_IPS[$server]}
   
-  # Only install on LAX (primary) node
+  # Only install on LAX (primary) node - Los Angeles as the headquarters location
   if [ "$server" != "lax" ]; then
     return
   fi
   
-  log "Installing looking glass on $server..."
+  log "Installing looking glass on $server (Los Angeles - Primary)..."
   
   # Generate looking glass configuration for anycast IP
   local lg_ip="192.30.120.10"  # From the anycast range

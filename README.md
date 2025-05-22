@@ -64,10 +64,10 @@ VULTR_BGP_PASSWORD=your_bgp_password
 SSH_KEY_PATH=/absolute/path/to/your/ssh/private_key
 
 # Region configuration - each role can be assigned to any valid Vultr region
-BGP_REGION_PRIMARY=ewr     # Primary region (no path prepending)
-BGP_REGION_SECONDARY=mia   # Secondary region (1x path prepending)
-BGP_REGION_TERTIARY=ord    # Tertiary region (2x path prepending)
-BGP_REGION_QUATERNARY=lax  # Quaternary region (2x path prepending)
+BGP_REGION_PRIMARY=lax     # Primary region (no path prepending) - Los Angeles
+BGP_REGION_SECONDARY=ord   # Secondary region (1x path prepending) - Chicago
+BGP_REGION_TERTIARY=mia    # Tertiary region (2x path prepending) - Miami
+BGP_REGION_QUATERNARY=ewr  # Quaternary region (2x path prepending) - Newark
 ```
 
 The script can automatically upload your SSH key to Vultr during deployment if it doesn't already exist in your Vultr account.
@@ -97,8 +97,9 @@ The infrastructure includes a secure WireGuard mesh network between all BGP spea
 
 1. **Direct Communication**: BGP speakers can communicate directly with each other
 2. **iBGP Sessions**: Internal BGP sessions established over the mesh network
-3. **Route Reflection**: LAX node serves as the route reflector for the iBGP mesh
-4. **Looking Glass Access**: Looking glass can query all BGP speakers through the mesh
+3. **Route Reflection**: LAX node (Los Angeles) serves as the route reflector for the iBGP mesh, prioritizing the headquarters location
+4. **Geographic Optimization**: Path prepending configured based on distance from Los Angeles
+5. **Looking Glass Access**: Looking glass can query all BGP speakers through the mesh
 
 The mesh network provides enhanced resilience, allowing BGP speakers to communicate even if parts of Vultr's infrastructure experience issues.
 
