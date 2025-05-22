@@ -1,3 +1,25 @@
+# DISCLAIMER AND DATE INFORMATION
+
+**Last Updated:** May 22, 2025
+
+## Educational Use Only Disclaimer
+
+This document is provided for educational purposes only. The information contained herein:
+
+1. **No Warranty**: Is provided "as is" without any warranties of any kind, either express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, or non-infringement.
+
+2. **No Guarantee of Security**: Does not guarantee complete security when implemented. Users must conduct their own security assessments and implement additional security measures appropriate to their specific environments and requirements.
+
+3. **User Responsibility**: Places the responsibility on the user to follow their own organization's security policies, industry best practices, and applicable laws and regulations.
+
+4. **No Liability**: The authors and contributors of this document shall not be liable for any direct, indirect, incidental, special, exemplary, or consequential damages resulting from the use or misuse of any information contained herein.
+
+5. **Technical Changes**: Security standards and best practices evolve over time. Users should regularly check for updated versions of this document and review current industry standards.
+
+By using this document, you acknowledge that you have read and understood this disclaimer and agree to use the information at your own risk.
+
+---
+
 # Vultr BGP Anycast Deployment
 
 ## Overview
@@ -13,6 +35,8 @@ Key features:
 - Path prepending for controlled failover
 - Dual-stack IPv4 and IPv6 BGP announcement
 - Remote Triggered Black Hole (RTBH) for DDoS mitigation
+- WireGuard mesh network between BGP speakers
+- Looking Glass implementation for route verification
 
 ## Prerequisites
 Before deploying, you need:
@@ -21,10 +45,10 @@ Before deploying, you need:
 3. A Vultr API key with full access
 
 ## Configuration
-Copy the provided `.env.sample` file to `.env` and configure your environment variables:
+Copy the provided `.env.template` file to `.env` and configure your environment variables:
 
 ```bash
-cp .env.sample .env
+cp .env.template .env
 nano .env  # Edit with your actual values
 ```
 
@@ -68,6 +92,16 @@ This deployment uses BIRD 2.16.2, which is built from source on each machine. Ke
 
 The `upgrade_bird.sh` script provides automated installation of BIRD 2.16.2 from source with all required dependencies.
 
+### Mesh Network Implementation
+The infrastructure includes a secure WireGuard mesh network between all BGP speakers, enabling:
+
+1. **Direct Communication**: BGP speakers can communicate directly with each other
+2. **iBGP Sessions**: Internal BGP sessions established over the mesh network
+3. **Route Reflection**: LAX node serves as the route reflector for the iBGP mesh
+4. **Looking Glass Access**: Looking glass can query all BGP speakers through the mesh
+
+The mesh network provides enhanced resilience, allowing BGP speakers to communicate even if parts of Vultr's infrastructure experience issues.
+
 ## Usage
 
 ### Initial Deployment
@@ -81,6 +115,18 @@ This will:
 4. Set up BIRD 2.16.2 with RPKI/ASPA validation
 5. Apply comprehensive security hardening
 6. Establish BGP sessions and announce your prefixes
+
+### Mesh Network Setup
+```bash
+./mesh_network.sh
+```
+This will:
+1. Install WireGuard on all BGP speakers
+2. Create a full mesh network between all nodes
+3. Configure iBGP sessions over the mesh
+4. Set up route reflection on the LAX node
+5. Deploy a looking glass for route verification
+6. Configure monitoring of route fidelity
 
 ### Monitoring
 ```bash
@@ -99,6 +145,7 @@ These commands provide detailed monitoring of:
 - Path prepending configuration verification
 - Routinator operation
 - Security service status
+- Mesh network connectivity status
 
 ### Reassigning Server Roles
 To change which server acts as primary, secondary, tertiary, or quaternary:
@@ -173,6 +220,7 @@ This deployment includes comprehensive security:
    - Strict iptables firewall rules
    - CrowdSec intrusion prevention
    - Fail2ban for brute force protection
+   - WireGuard encrypted mesh network
 
 2. **BGP Security**
    - RPKI validation with ARIN, RIPE, and Cloudflare validators
@@ -181,6 +229,7 @@ This deployment includes comprehensive security:
    - Route coloring via BGP communities
    - Path prepending for traffic engineering and controlled failover
    - BIRD 2.16.2 security features including prefix filtering and session protection
+   - iBGP sessions over encrypted WireGuard tunnels
 
 3. **System Hardening**
    - Automatic security updates
@@ -223,8 +272,8 @@ Detailed documentation is available in the "support docs" directory:
 
 The BIRD 2.16.2 upgrade is essential for proper dual-stack operation. Earlier versions (like 2.0.8) have several IPv6 related issues, particularly with multihop BGP sessions and route advertisement. The upgrade process preserves your existing configuration while enhancing capabilities.
 
-### Deployment Tools
-- `update_deploy_for_dualstack.sh` - Update deploy.sh with dual-stack support
+### Mesh Network Management
+- `mesh_network.sh` - Set up WireGuard mesh network between BGP speakers and deploy looking glass
 
 ## License
 Copyright (c) 2025. All rights reserved.
