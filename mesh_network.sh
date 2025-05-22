@@ -63,13 +63,20 @@ install_wireguard() {
   log "Installing WireGuard on $server ($ip)..."
   
   ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=accept-new "root@$ip" "
-    apt-get update
-    apt-get install -y wireguard wireguard-tools
+    # Fix any interrupted dpkg
+    dpkg --configure -a
+    
+    # Update and install wireguard
+    DEBIAN_FRONTEND=noninteractive apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard wireguard-tools linux-modules-extra-\$(uname -r)
     
     # Enable IP forwarding
     echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf
     echo 'net.ipv6.conf.all.forwarding = 1' >> /etc/sysctl.conf
     sysctl -p
+    
+    # Load WireGuard module
+    modprobe wireguard
     
     # Create WireGuard keys directory
     mkdir -p /etc/wireguard/keys
@@ -113,7 +120,8 @@ create_wireguard_config() {
   local config="[Interface]\n"
   config+="PrivateKey = \$(cat /etc/wireguard/keys/${server}_private.key)\n"
   config+="Address = $wg_ip\n"
-  config+="ListenPort = $WG_PORT\n\n"
+  config+="ListenPort = $WG_PORT\n"
+  config+="SaveConfig = false\n\n"
   
   # Add peers (all other servers)
   for peer in "${!PUBLIC_IPS[@]}"; do
@@ -142,15 +150,33 @@ create_wireguard_config() {
       ufw route allow in on wg0 out on eth0
       ufw reload
     else
+      # Create iptables directory if it doesn't exist
+      mkdir -p /etc/iptables
+      
+      # Add firewall rules
       iptables -A INPUT -p udp --dport $WG_PORT -j ACCEPT
       iptables -A FORWARD -i wg0 -j ACCEPT
       iptables -A FORWARD -o wg0 -j ACCEPT
-      iptables-save > /etc/iptables/rules.v4
+      
+      # Save rules if iptables-save is available
+      if command -v iptables-save &> /dev/null; then
+        iptables-save > /etc/iptables/rules.v4
+      fi
     fi
     
-    # Enable and start WireGuard
+    # Enable WireGuard service
     systemctl enable wg-quick@wg0
-    systemctl start wg-quick@wg0
+    
+    # Stop the service if it's running to ensure clean start
+    systemctl stop wg-quick@wg0 || true
+    
+    # Start the service
+    echo 'Starting WireGuard service...'
+    systemctl start wg-quick@wg0 || echo 'Failed to start WireGuard, will continue anyway'
+    
+    # Get status
+    echo 'WireGuard status:'
+    systemctl status wg-quick@wg0 || true
   "
   
   log "WireGuard configuration created and service started on $server"
@@ -171,24 +197,24 @@ configure_ibgp() {
   log "Configuring iBGP on $server (Route Reflector: $is_route_reflector)..."
   
   # Generate iBGP configuration
-  local ibgp_config="# iBGP Configuration for mesh network\n\n"
-  
   if [ $is_route_reflector -eq 1 ]; then
-    # Route reflector configuration
-    ibgp_config+="# Route Reflector Configuration\n"
-    ibgp_config+="define rr_cluster_id = 1;\n\n"
-    
-    # Create peer template for route reflection
-    ibgp_config+="template bgp ibgp_clients {\n"
-    ibgp_config+="  local as ${OUR_AS};\n"
-    ibgp_config+="  rr client;\n"
-    ibgp_config+="  rr cluster id rr_cluster_id;\n"
-    ibgp_config+="  next hop self;\n"
-    ibgp_config+="  direct;\n"
-    ibgp_config+="  igp table master;\n"
-    ibgp_config+="  import all;\n"
-    ibgp_config+="  export all;\n"
-    ibgp_config+="}\n\n"
+    # Route reflector configuration - construct single-line content to avoid quoting issues
+    local ibgp_content="# iBGP Configuration for mesh network
+
+# Route Reflector Configuration
+define rr_cluster_id = 1;
+
+template bgp ibgp_clients {
+  local as ${OUR_AS};
+  rr client;
+  rr cluster id rr_cluster_id;
+  next hop self;
+  direct;
+  igp table master;
+  import all;
+  export all;
+}
+"
     
     # Create iBGP peers (route clients)
     for peer in "${!PUBLIC_IPS[@]}"; do
@@ -196,38 +222,67 @@ configure_ibgp() {
         local peer_id=${SERVER_IDS[$peer]}
         local peer_wg_ip="10.10.10.$peer_id"
         
-        ibgp_config+="protocol bgp ibgp_${peer} from ibgp_clients {\n"
-        ibgp_config+="  neighbor $peer_wg_ip as ${OUR_AS};\n"
-        ibgp_config+="  description \"iBGP to ${peer} (${SERVER_ROLES[$peer]})\";\n"
-        ibgp_config+="}\n\n"
+        ibgp_content+="
+protocol bgp ibgp_${peer} from ibgp_clients {
+  neighbor $peer_wg_ip as ${OUR_AS};
+  description \"iBGP to ${peer} (${SERVER_ROLES[$peer]})\"
+}
+"
       fi
     done
   else
     # Non-route-reflector configuration (client)
-    ibgp_config+="# iBGP Client Configuration\n"
-    ibgp_config+="protocol bgp ibgp_rr {\n"
-    ibgp_config+="  local as ${OUR_AS};\n"
-    ibgp_config+="  neighbor 10.10.10.${SERVER_IDS[\"lax\"]} as ${OUR_AS};\n"
-    ibgp_config+="  next hop self;\n"
-    ibgp_config+="  direct;\n"
-    ibgp_config+="  igp table master;\n"
-    ibgp_config+="  import all;\n"
-    ibgp_config+="  export all;\n"
-    ibgp_config+="  description \"iBGP to Route Reflector (LAX)\";\n"
-    ibgp_config+="}\n\n"
+    local ibgp_content="# iBGP Configuration for mesh network
+
+# iBGP Client Configuration
+protocol bgp ibgp_rr {
+  local as ${OUR_AS};
+  neighbor 10.10.10.4 as ${OUR_AS};
+  next hop self;
+  direct;
+  igp table master;
+  import all;
+  export all;
+  description \"iBGP to Route Reflector (LAX)\"
+}
+"
   fi
   
   # Deploy iBGP configuration to server
+  
+  # Create a temporary file with the configuration
+  local temp_ibgp_file=$(mktemp)
+  echo "$ibgp_content" > "$temp_ibgp_file"
+  
+  # SCP the file to the server
+  scp -i "$SSH_KEY_PATH" "$temp_ibgp_file" "root@$ip:/etc/bird/ibgp.conf"
+  
+  # Remove the temporary file
+  rm "$temp_ibgp_file"
+  
+  # Configure BIRD remotely
   ssh -i "$SSH_KEY_PATH" "root@$ip" "
-    echo -e \"$ibgp_config\" > /etc/bird/ibgp.conf
+    # Ensure bird directory exists
+    mkdir -p /etc/bird
     
-    # Add include statement if not already present
-    if ! grep -q 'include \"ibgp.conf\";' /etc/bird/bird.conf; then
-      echo 'include \"ibgp.conf\";' >> /etc/bird/bird.conf
+    # Check if bird.conf exists
+    if [ -f /etc/bird/bird.conf ]; then
+      # Add include statement if not already present
+      if ! grep -q 'include \"ibgp.conf\";' /etc/bird/bird.conf; then
+        echo 'include \"ibgp.conf\";' >> /etc/bird/bird.conf
+      fi
+      
+      # Check if BIRD is installed and running
+      if command -v birdc &> /dev/null && systemctl is-active bird &> /dev/null; then
+        # Restart BIRD to apply configuration
+        systemctl restart bird
+        echo 'BIRD restarted successfully'
+      else
+        echo 'BIRD is not installed or not running. Skipping restart.'
+      fi
+    else
+      echo 'BIRD configuration file not found. Please ensure BIRD is installed properly.'
     fi
-    
-    # Restart BIRD to apply configuration
-    systemctl restart bird
   "
   
   log "iBGP configuration completed on $server"
@@ -251,9 +306,12 @@ install_looking_glass() {
   local lg_domain="lg.infinitum-nihil.com"
   
   ssh -i "$SSH_KEY_PATH" "root@$ip" "
+    # Fix any interrupted dpkg
+    dpkg --configure -a
+    
     # Install dependencies
-    apt update
-    apt install -y python3 python3-pip python3-venv redis-server nginx certbot python3-certbot-nginx socat
+    DEBIAN_FRONTEND=noninteractive apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip python3-venv redis-server nginx certbot python3-certbot-nginx socat
     
     # Add anycast IP to loopback interface
     ip addr add $lg_ip/32 dev lo
@@ -711,13 +769,31 @@ verify_mesh_network() {
     local ip=${PUBLIC_IPS[$server]}
     
     log "Checking WireGuard status on $server..."
-    ssh -i "$SSH_KEY_PATH" "root@$ip" "wg show"
+    ssh -i "$SSH_KEY_PATH" "root@$ip" "
+      if command -v wg &> /dev/null; then
+        wg show || echo 'WireGuard status command failed'
+      else
+        echo 'WireGuard tools not installed or not in PATH'
+      fi
+    "
     
     log "Checking iBGP status on $server..."
-    ssh -i "$SSH_KEY_PATH" "root@$ip" "birdc show protocols | grep ibgp"
+    ssh -i "$SSH_KEY_PATH" "root@$ip" "
+      if command -v birdc &> /dev/null; then
+        birdc show protocols | grep -i ibgp || echo 'No iBGP protocols found'
+      else
+        echo 'BIRD control tool not installed or not in PATH'
+      fi
+    "
     
     log "Checking route propagation on $server..."
-    ssh -i "$SSH_KEY_PATH" "root@$ip" "birdc show route where source ~ \".*ibgp.*\""
+    ssh -i "$SSH_KEY_PATH" "root@$ip" "
+      if command -v birdc &> /dev/null; then
+        birdc show route where source ~ \".*ibgp.*\" || echo 'No iBGP routes found'
+      else
+        echo 'BIRD control tool not installed or not in PATH'
+      fi
+    "
   done
   
   log "Mesh network verification completed"

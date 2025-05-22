@@ -21,14 +21,24 @@
         "us-east": {
           "ewr": {
             "ipv4": {
-              "address": "149.28.72.123",
+              "address": "66.135.18.138",
+              "role": "secondary",
+              "last_updated": "2024-04-20"
+            },
+            "ipv6": {
+              "address": "2001:19f0:7:2b32:5400:2ff:fe9a:1c3e",
               "role": "secondary",
               "last_updated": "2024-04-20"
             }
           },
           "mia": {
             "ipv4": {
-              "address": "149.28.72.123",
+              "address": "149.28.108.180",
+              "role": "tertiary",
+              "last_updated": "2024-04-20"
+            },
+            "ipv6": {
+              "address": "2001:19f0:9001:2bb2:5400:2ff:fe9a:1c4f",
               "role": "tertiary",
               "last_updated": "2024-04-20"
             }
@@ -37,7 +47,12 @@
         "us-central": {
           "ord": {
             "ipv4": {
-              "address": "149.28.72.123",
+              "address": "66.42.113.101",
+              "role": "quaternary",
+              "last_updated": "2024-04-20"
+            },
+            "ipv6": {
+              "address": "2001:19f0:5c01:24a8:5400:2ff:fe9a:1c5a",
               "role": "quaternary",
               "last_updated": "2024-04-20"
             }
@@ -65,6 +80,13 @@
     "description": "BGP server configuration and authentication details",
     "last_audit": "2024-04-20",
     "deployment_strategy": "active-active",
+    "public_as_number": 27218,
+    "internal_as_number": 65001,
+    "provider_as_number": 64515,
+    "network_blocks": {
+      "ipv4": ["192.30.120.0/23"],
+      "ipv6": ["2620:71:4000::/48"]
+    },
     "failover_config": {
       "primary": "vultr.us-west.lax",
       "secondary": "vultr.us-east.ewr",
