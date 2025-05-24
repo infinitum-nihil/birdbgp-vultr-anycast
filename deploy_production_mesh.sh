@@ -8,6 +8,7 @@
 # their configuration through a centralized service discovery API.
 #
 # Features:
+# - Ubuntu 24.04 LTS with latest security updates pre-installed
 # - Service discovery API for dynamic configuration management
 # - Cloud-init bootstrap for fully automated node setup
 # - WireGuard mesh network with IPv4/IPv6 tunnels
@@ -37,8 +38,13 @@ if [ -z "$VULTR_API_KEY" ]; then
 fi
 # Vultr configuration IDs
 # These IDs are specific to this deployment and should be updated for different environments
-SSH_KEY_ID="9bd72db9-f745-4b0f-b9b2-55c967f3fae1"              # SSH key for nt@infinitum-nihil.com
+SSH_KEY_ID="9bd72db9-f745-4b0f-b9b2-55c967f3fae1"              # SSH key for nt@infinitum-nihil.com (legacy)
+SSH_KEY_ID_CURRENT="f190effd-73b3-4ac1-8b6a-0d847703e45f"      # SSH key for normtodd@NTubuntu (current)
 FIREWALL_GROUP_ID="c07c67b8-7cd2-405a-a559-65578a1edbad"       # BGP Servers firewall group
+
+# STANDARD PROCEDURE: Always include both SSH keys for compatibility and current access
+# STANDARD PROCEDURE: Always enable IPv6 (enable_ipv6: true) for dual-stack BGP
+# STANDARD PROCEDURE: Nodes self-register with service discovery API (no need to pre-populate IPs)
 
 # Node configuration arrays
 # These define the BGP mesh topology and will be replaced during deployment
@@ -48,18 +54,18 @@ declare -A NODES=(
     ["ewr"]="108.61.142.4"     # Newark - Quaternary BGP node
 )
 
-# Instance IDs for cleanup/management (will be updated after deployment)
+# Instance IDs for cleanup/management (updated with current instances)
 declare -A INSTANCE_IDS=(
-    ["ord"]="d7d74db9-7b8f-47e1-9587-6da632993d4d"
-    ["mia"]="f5dd9cc8-ce60-4eb8-ab90-6bc8d4b30150"
-    ["ewr"]="6dfd57d5-09ff-4aae-b097-28c56dafb1ec"
+    ["ord"]="30fbb3f6-c9dd-4454-8053-32fb0ec58f0d"
+    ["mia"]="5d9ae504-47b1-4c08-b42e-fbb8c5b31dec"
+    ["ewr"]="ac4cc7d6-bfcc-47c8-a254-b2479b572c4b"
 )
 
-# Node labels for Vultr identification
+# Node labels for Vultr identification (upgrading to 2c2g for BGP + Docker)
 declare -A LABELS=(
-    ["ord"]="ord-bgp-secondary-1c1g"     # 1 CPU, 1GB RAM instance
-    ["mia"]="mia-bgp-tertiary-1c1g"      # 1 CPU, 1GB RAM instance
-    ["ewr"]="ewr-bgp-quaternary-1c1g"    # 1 CPU, 1GB RAM instance
+    ["ord"]="ord-bgp-secondary-2c2g"     # 2 CPU, 2GB RAM instance
+    ["mia"]="mia-bgp-tertiary-2c2g"      # 2 CPU, 2GB RAM instance
+    ["ewr"]="ewr-bgp-quaternary-2c2g"    # 2 CPU, 2GB RAM instance
 )
 
 # BGP hierarchy roles for route reflection topology
@@ -71,7 +77,7 @@ declare -A ROLES=(
 
 # Encode cloud-init as base64
 echo "Encoding cloud-init configuration..."
-CLOUD_INIT_B64=$(base64 -w 0 /home/normtodd/birdbgp/cloud-init-with-service-discovery.yaml)
+CLOUD_INIT_B64=$(base64 -w 0 cloud-init-with-service-discovery.yaml)
 
 echo "=== BGP Anycast Mesh Production Deployment ==="
 echo "Deploying service discovery-driven BGP mesh"
@@ -129,11 +135,12 @@ for node in ord mia ewr; do
             \"plan\": \"$plan\",
             \"os_id\": $os_id,
             \"label\": \"${LABELS[$node]}\",
-            \"sshkey_id\": [\"$SSH_KEY_ID\"],
+            \"sshkey_id\": [\"$SSH_KEY_ID\", \"f190effd-73b3-4ac1-8b6a-0d847703e45f\"],
             \"firewall_group_id\": \"$FIREWALL_GROUP_ID\",
             \"user_data\": \"$CLOUD_INIT_B64\",
             \"hostname\": \"$node-${ROLES[$node]}-bgp\",
-            \"tag\": \"bgp-mesh-service-discovery\"
+            \"tag\": \"bgp-mesh-service-discovery\",
+            \"enable_ipv6\": true
         }")
     
     new_instance_id=$(echo "$create_response" | jq -r '.instance.id')

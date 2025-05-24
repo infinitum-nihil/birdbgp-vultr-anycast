@@ -1,6 +1,154 @@
-# DISCLAIMER AND DATE INFORMATION
+# BGP Anycast Mesh with Service Discovery
 
 **Last Updated:** May 24, 2025
+
+## GOALS
+
+This project implements a production-ready BGP anycast mesh with the following objectives:
+
+### Primary Goals
+- **Geographic Load Balancing**: Distribute traffic based on client proximity using anycast routing
+- **High Availability**: Eliminate single points of failure through mesh redundancy
+- **Automated Configuration**: Service discovery API for zero-touch node deployment
+- **Security Hardening**: MD5 authenticated BGP sessions with firewall protection
+- **Dual-Stack Support**: Full IPv4/IPv6 implementation across all components
+
+### Technical Objectives
+- **BGP Route Announcements**: Announce ARIN-assigned 192.30.120.0/23 and 2620:71:4000::/48
+- **Anycast Services**: Single IP (192.30.120.100) serving multiple geographic locations
+- **Self-Healing Mesh**: Automatic failover and route convergence
+- **Compliance Ready**: MANRS-compliant routing with RPKI validation support
+- **Monitoring Integration**: Service discovery with health checks and status reporting
+
+### Operational Goals
+- **Zero-Touch Deployment**: Cloud-init automated bootstrap for new nodes
+- **Geographic Intelligence**: Automatic region detection and configuration assignment
+- **Scalable Architecture**: Easy addition of new geographic locations
+- **Documentation**: Comprehensive setup and troubleshooting guides
+
+## TOPOLOGIES
+
+### Network Topology
+
+```
+Geographic Distribution:
+┌─────────────────────────────────────────────────────────────┐
+│                    Global BGP Mesh                          │
+├─────────────────────────────────────────────────────────────┤
+│  LAX (Primary)     ORD (Secondary)     MIA (Tertiary)      │
+│  149.248.2.74      45.76.18.21        [149.28.106.116]    │
+│  Route Reflector   BGP Speaker        BGP Speaker          │
+│                                                             │
+│                    EWR (Quaternary)                        │
+│                    [45.77.104.153]                         │
+│                    BGP Speaker                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### BGP Topology (iBGP Mesh)
+
+```
+                    ┌─────────────┐
+                    │     LAX     │
+                    │  (Primary)  │
+                    │Route Reflector│
+                    │10.10.10.1   │
+                    └──────┬──────┘
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+    ┌─────▼─────┐    ┌─────▼─────┐    ┌─────▼─────┐
+    │    ORD    │    │    MIA    │    │    EWR    │
+    │(Secondary)│    │(Tertiary) │    │(Quaternary)│
+    │10.10.10.2 │    │10.10.10.3 │    │10.10.10.4 │
+    └───────────┘    └───────────┘    └───────────┘
+```
+
+### Service Discovery Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│               Service Discovery Flow                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  New Node Deployment:                                      │
+│  1. Cloud-init → Self-register with API                    │
+│  2. API uses Vultr region detection                        │
+│  3. Geographic assignment based on actual location         │
+│  4. Download WireGuard & BGP configuration                 │
+│  5. Establish mesh connectivity                             │
+│                                                             │
+│  Components:                                                │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    │
+│  │ Cloud-init  │───▶│Service Disc.│───▶│BGP + WG     │    │
+│  │ Bootstrap   │    │ API (LAX)   │    │Configuration│    │
+│  └─────────────┘    └─────────────┘    └─────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### IP Allocation Topology
+
+```
+ARIN Assigned Blocks:
+├── IPv4: 192.30.120.0/23
+│   ├── LAX Subnet: 192.30.120.0/29  (Primary: .1)
+│   ├── ORD Subnet: 192.30.120.8/29  (Primary: .9)
+│   ├── EWR Subnet: 192.30.120.16/29 (Primary: .17)
+│   ├── MIA Subnet: 192.30.120.24/29 (Primary: .25)
+│   └── Anycast: 192.30.120.100 (Global Services)
+│
+├── IPv6: 2620:71:4000::/48
+│   └── Geographic allocations from this block
+│
+└── WireGuard Mesh: 10.10.10.0/24
+    ├── LAX: 10.10.10.1 (Route Reflector)
+    ├── ORD: 10.10.10.2 (BGP Client)
+    ├── MIA: 10.10.10.3 (BGP Client)
+    └── EWR: 10.10.10.4 (BGP Client)
+```
+
+## TECHNOLOGIES USED
+
+### Core Infrastructure
+- **BGP Routing**: BIRD 2.17.1 (Internet Routing Daemon)
+- **Cloud Platform**: Vultr (AS64515) with global BGP peering
+- **Operating System**: Ubuntu 24.04 LTS (Latest stable with security updates)
+- **Tunneling**: WireGuard (Secure mesh networking)
+- **Process Management**: systemd (Service orchestration)
+
+### Networking Stack
+- **BGP Protocol**: iBGP mesh with route reflection topology
+- **Authentication**: MD5 password authentication for all BGP sessions
+- **IP Stack**: Dual-stack IPv4/IPv6 throughout
+- **Anycast Routing**: BGP-based geographic load balancing
+- **Firewall**: UFW (Uncomplicated Firewall) with restrictive rules
+
+### Service Discovery & Automation
+- **API Framework**: Python Flask (RESTful service discovery)
+- **Configuration Management**: JSON schema with geographic intelligence
+- **Cloud Integration**: Vultr API for region detection and instance management
+- **Bootstrap**: cloud-init YAML for zero-touch deployment
+- **HTTP Client**: curl for API interactions and health checks
+
+### Development & Management Tools
+- **Version Control**: Git with comprehensive documentation
+- **Configuration Files**: YAML, JSON, and shell script automation
+- **Monitoring**: Custom health check scripts and BGP session monitoring
+- **Documentation**: Markdown with network diagrams and deployment guides
+
+### Security Components
+- **SSH Authentication**: Ed25519 keys with dual-key support
+- **Network Security**: IP filtering on service discovery API
+- **BGP Security**: MD5 authentication and proper route filtering
+- **Access Control**: UFW firewall rules for BGP, WireGuard, and management
+
+### Compliance & Standards
+- **ARIN Integration**: Official IP block assignments and management
+- **MANRS Compliance**: Mutually Agreed Norms for Routing Security
+- **RPKI Ready**: Route validation preparation for enhanced security
+- **Industry Standards**: Following BGP best practices and RFC specifications
+
+# DISCLAIMER AND DATE INFORMATION
 
 ## Educational Use Only Disclaimer
 

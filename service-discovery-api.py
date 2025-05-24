@@ -117,6 +117,60 @@ def get_firewall_rules():
     config = load_config()
     return jsonify(config["firewall_config"])
 
+@app.route('/api/v1/nodes/register', methods=['POST'])
+def register_node():
+    """
+    Node self-registration endpoint.
+    New nodes register themselves with their external IPs before discovery.
+    """
+    try:
+        data = request.get_json()
+        external_ip = data.get('external_ip')
+        external_ipv6 = data.get('external_ipv6', '')
+        
+        if not external_ip:
+            return jsonify({'error': 'external_ip required'}), 400
+        
+        # Load current config
+        config = load_config()
+        
+        # Check if this IP already exists
+        existing_node_id, existing_node = get_node_by_vultr_ip(external_ip)
+        
+        if existing_node:
+            # Update existing node endpoint
+            config['wireguard_config']['node_assignments'][existing_node_id]['vultr_endpoint'] = f"{external_ip}:51820"
+            save_config(config)
+            return jsonify({
+                'status': 'updated',
+                'node_id': existing_node_id,
+                'message': f'Updated endpoint for {existing_node_id}'
+            })
+        else:
+            # Find an available node slot based on unmatched endpoint IPs
+            for node_id, node_config in config['wireguard_config']['node_assignments'].items():
+                current_endpoint_ip = node_config['vultr_endpoint'].split(':')[0]
+                # If this node has a placeholder or unreachable IP, assign the new IP
+                if current_endpoint_ip in ['45.76.21.14', '207.246.118.124', '45.77.206.132', '0.0.0.0']:
+                    config['wireguard_config']['node_assignments'][node_id]['vultr_endpoint'] = f"{external_ip}:51820"
+                    save_config(config)
+                    return jsonify({
+                        'status': 'registered',
+                        'node_id': node_id,
+                        'message': f'Registered as {node_id}',
+                        'assigned_ip': external_ip
+                    })
+            
+            return jsonify({'error': 'No available node slots for registration'}), 400
+            
+    except Exception as e:
+        return jsonify({'error': f'Registration failed: {str(e)}'}), 500
+
+def save_config(config):
+    """Save updated configuration to file"""
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
+
 @app.route('/api/v1/nodes/discover', methods=['POST'])
 def discover_node():
     """Auto-discover node configuration based on external IP"""
