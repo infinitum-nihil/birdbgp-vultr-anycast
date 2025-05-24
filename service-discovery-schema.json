@@ -10,8 +10,8 @@
     "ipv4_prefix": "192.30.120.0/23",
     "ipv6_prefix": "2620:71:4000::/48",
     "anycast_config": {
-      "global_service_ip": "192.30.120.10",
-      "service_ports": [80, 443]
+      "global_service_ip": "192.30.120.100",
+      "service_ports": [80, 443, 8080]
     },
     "geographic_allocation": {
       "lax": {
@@ -24,7 +24,7 @@
       "ord": {
         "subnet": "192.30.120.8/29",
         "vultr_primary": "192.30.120.9",
-        "vultr_secondary": "192.30.120.10",
+        "vultr_secondary": "192.30.120.12",
         "aws_primary": "192.30.120.11"
       },
       "ewr": {

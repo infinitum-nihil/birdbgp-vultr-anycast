@@ -9,13 +9,13 @@ Successfully architected and implemented a service discovery-driven, dual-stack 
 - **IPv6 Prefix:** 2620:71:4000::/48
 - **WireGuard IPv4 Subnet:** 10.10.10.0/24 (mesh tunnels)
 - **WireGuard IPv6 Subnet:** fd00:10:10::/48 (mesh tunnels)
-- **Anycast Service IP:** 192.30.120.10 (global load balancing)
+- **Anycast Service IP:** 192.30.120.100 (web services + looking glass)
 
 ## Geographic IP Allocation (/29 per Region)
 | Region | Subnet | Vultr Primary | Vultr Secondary | AWS Primary | GCP Primary |
 |--------|---------|---------------|-----------------|-------------|-------------|
 | LAX | 192.30.120.0/29 | .1 | .2 | .3 | .4 |
-| ORD | 192.30.120.8/29 | .9 | .10 | .11 | .12 |
+| ORD | 192.30.120.8/29 | .9 | .12 | .11 | .13 |
 | EWR | 192.30.120.16/29 | .17 | .18 | .19 | .20 |
 | MIA | 192.30.120.24/29 | .25 | .26 | .27 | .28 |
 
@@ -115,8 +115,10 @@ GET  /api/v1/status                   # Service health and metrics
 ```
 
 ### Anycast Traffic Flow
+
+#### IPv4 Anycast Routing
 ```
-User → 192.30.120.10:80/443 → Closest Geographic Node
+User → 192.30.120.100 → Closest Geographic Node
      ↓
    BGP Anycast Routing (shortest AS path)
      ↓  
@@ -124,7 +126,30 @@ User → 192.30.120.10:80/443 → Closest Geographic Node
    ORD: 192.30.120.9    (Central US users)  
    EWR: 192.30.120.17   (East Coast users)
    MIA: 192.30.120.25   (Southeast US users)
+
+Services on 192.30.120.100:
+├── Port 80/443: Web Services
+└── Port 8080:   BGP Looking Glass
 ```
+
+#### IPv6 Anycast Routing  
+```
+User → 2620:71:4000::100 → Closest Geographic Node
+     ↓
+   BGP Anycast Routing (shortest AS path)
+     ↓
+   LAX: 2620:71:4000::1     (West Coast users)
+   ORD: 2620:71:4000::9     (Central US users)
+   EWR: 2620:71:4000::17    (East Coast users)  
+   MIA: 2620:71:4000::25    (Southeast US users)
+
+Services on 2620:71:4000::100:
+├── Port 80/443: Web Services
+└── Port 8080:   BGP Looking Glass
+```
+
+Note: IPv6 anycast IPs are planned for future implementation.
+Current IPv6 connectivity uses Vultr-assigned global addresses.
 
 ### BGP Route Reflector Topology
 ```
@@ -150,19 +175,66 @@ User → 192.30.120.10:80/443 → Closest Geographic Node
 - Port 51820: WireGuard (known mesh nodes only)
 
 ### Multi-Provider IP Allocation Strategy
+
+#### IPv4 Allocation (192.30.120.0/23)
 ```
 LAX Region: 192.30.120.0/29 (8 IPs)
-├── .1  Vultr Primary    (Active)
-├── .2  Vultr Secondary  (Future)
-├── .3  AWS Primary      (Future) 
-├── .4  GCP Primary      (Future)
+├── .1  Vultr Primary    (✅ Active)
+├── .2  Vultr Secondary  (Reserved)
+├── .3  AWS Primary      (Reserved) 
+├── .4  GCP Primary      (Reserved)
 └── .5-6 Reserved        (Expansion)
 
-ORD Region: 192.30.120.8/29 (8 IPs)  
+ORD Region: 192.30.120.8/29 (8 IPs)
+├── .9  Vultr Primary    (✅ Active)
+├── .11 AWS Primary      (Reserved)
+├── .12 Vultr Secondary  (Reserved)
+└── .13-15 Reserved      (Expansion)
+
 EWR Region: 192.30.120.16/29 (8 IPs)
+├── .17 Vultr Primary    (✅ Active)
+├── .18 Vultr Secondary  (Reserved)
+├── .19 AWS Primary      (Reserved)
+└── .20-23 Reserved      (Expansion)
+
 MIA Region: 192.30.120.24/29 (8 IPs)
-EU Region:  192.30.120.32/29 (Future)
-APAC Region: 192.30.120.40/29 (Future)
+├── .25 Vultr Primary    (✅ Active)
+├── .26 Vultr Secondary  (Reserved)
+├── .27 AWS Primary      (Reserved)
+└── .28-31 Reserved      (Expansion)
+
+Anycast Service IP:
+└── 192.30.120.100  Global Services (HTTP/HTTPS + Looking Glass)
+
+Future Expansion:
+├── EU Region:   192.30.120.32/29 (Reserved)
+├── APAC Region: 192.30.120.40/29 (Reserved)
+└── Additional:  192.30.120.48-255 (Available)
+```
+
+#### IPv6 Allocation (2620:71:4000::/48)
+```
+Global Prefix: 2620:71:4000::/48 (Announced from all nodes)
+
+Current Active IPv6 Addresses:
+├── LAX: [Vultr Auto-Assigned Global IPv6]
+├── ORD: 2001:19f0:5c00:208e:5400:5ff:fe76:7cc3  (Vultr Global)
+├── MIA: 2001:19f0:9003:a46:5400:5ff:fe76:7ccc   (Vultr Global)
+└── EWR: 2001:19f0:1000:3f27:5400:5ff:fe76:7cce  (Vultr Global)
+
+IPv6 Mesh Network:
+├── LAX: fd00:10:10::1/48 (WireGuard tunnel)
+├── ORD: fd00:10:10::2/48 (WireGuard tunnel)
+├── MIA: fd00:10:10::3/48 (WireGuard tunnel)
+└── EWR: fd00:10:10::4/48 (WireGuard tunnel)
+
+Anycast Service IP (Planned):
+└── 2620:71:4000::100  Global Services (HTTP/HTTPS + Looking Glass)
+
+Future IPv6 Subnetting Strategy:
+├── Regional Subnets: 2620:71:4000::/64 per region for expansion
+├── Service Subnets: 2620:71:4000:1::/64 for anycast services
+└── Management:      2620:71:4000:ffff::/64 for infrastructure
 ```
 
 ## Key Innovations & Lessons Learned

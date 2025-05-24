@@ -99,7 +99,7 @@ EWR (108.61.157.169) - ewr-bgp-quaternary [2c2g]
 ### Currently Utilized IPv4 Addresses (from 192.30.120.0/23)
 
 **Anycast Service IP:**
-- `192.30.120.10` - Global anycast service endpoint
+- `192.30.120.100` - Global services (HTTP/HTTPS on 80/443, Looking Glass on 8080)
 
 **Geographic Allocation (/29 subnets per region):**
 
@@ -111,8 +111,8 @@ EWR (108.61.157.169) - ewr-bgp-quaternary [2c2g]
 
 **ORD Region (192.30.120.8/29):**
 - `192.30.120.9` - Vultr primary (✅ currently deployed)
-- `192.30.120.10` - Vultr secondary (reserved, overlaps with anycast IP)
 - `192.30.120.11` - AWS primary (reserved)
+- `192.30.120.12` - Vultr secondary (reserved)
 
 **EWR Region (192.30.120.16/29):**
 - `192.30.120.17` - Vultr primary (✅ currently deployed)
@@ -149,9 +149,10 @@ EWR (108.61.157.169) - ewr-bgp-quaternary [2c2g]
 - EWR: `fd00:10:10::4`
 
 ### Utilization Summary
-- **IPv4 Active**: 5 addresses (4 node IPs + 1 anycast) out of 512 available
+- **IPv4 Active**: 5 addresses (4 node IPs + 1 anycast service) out of 512 available
 - **IPv4 Reserved**: 8 additional addresses for multi-provider expansion
 - **IPv6 Active**: Full /48 prefix globally announced and reachable
+- **IPv6 Planned**: 1 anycast service address for dual-stack services
 - **Geographic Expansion**: Each region has /29 subnet allowing up to 8 IP addresses per region
 
 ## Prerequisites
@@ -176,10 +177,14 @@ Before deploying, you need:
 ### 2. Test Dual-Stack Anycast Connectivity
 ```bash
 # Verify IPv4 global reachability
-ping 192.30.120.10
+ping 192.30.120.100
 
-# Verify IPv6 global reachability (if IPv6 connectivity available)
-ping6 2620:71:4000::10
+# Test web services and looking glass on same anycast IP
+curl http://192.30.120.100:80
+curl http://192.30.120.100:8080
+
+# Verify IPv6 global reachability (when implemented)
+ping6 2620:71:4000::100
 
 # Check BGP announcements and service status
 curl http://149.248.2.74:5000/api/v1/status
@@ -200,18 +205,42 @@ ssh root@149.248.2.74 'birdc show route for 2620:71:4000::/48'
 ssh root@45.76.17.217 'birdc show protocols vultr6'  # IPv6 BGP status
 ```
 
-## Configuration Files
+## Repository Structure
 
-### Core Components
-- **`service-discovery-schema.json`**: Network configuration and node definitions
+### Production Files (Root Directory)
+- **`deploy_production_mesh.sh`**: Main production deployment script
 - **`service-discovery-api.py`**: RESTful API server for dynamic configuration
-- **`cloud-init-with-service-discovery.yaml`**: Bootstrap template for new nodes
-- **`deploy_production_mesh.sh`**: Production deployment script
+- **`service-discovery-schema.json`**: Network configuration and node definitions
+- **`bgp_config.json`**: BGP configuration parameters
+- **`README.md`**, **`CLAUDE.md`**, **`SECURITY.md`**: Documentation
 
-### Generated Configurations
-- **`generated_configs/`**: BIRD configurations for each region
-- **WireGuard Configs**: Auto-generated mesh network configurations
-- **Firewall Rules**: UFW rules for secure multi-service access
+### Core Directories
+- **`generated_configs/`**: Auto-generated BIRD configurations for each region
+- **`config_files/`**: Configuration management and schema files
+- **`support docs/`**: Technical documentation and reference materials
+
+### Development & Testing Directories
+- **`testing_scripts/`**: Testing and validation scripts organized by function
+  - `bgp_testing/`: BGP session and routing tests
+  - `deployment_testing/`: Deployment process testing
+  - `infrastructure_testing/`: Server and scaling tests
+  - `ipv6_testing/`: IPv6 connectivity and dual-stack tests
+  - `looking_glass_testing/`: Looking glass implementation tests
+- **`development_tools/`**: Development utilities and legacy tools
+  - `bird_configs/`: BIRD configuration files and tools
+  - `legacy_fixes/`: Historical fix scripts
+  - `wireguard_tools/`: Mesh network setup tools
+
+### Archive Directories
+- **`logs_archive/`**: Historical deployment and operation logs
+- **`deployment_backups/`**: Backup deployment configurations
+- **`archived_scripts/`**: Legacy scripts no longer in active use
+- **`temp_files/`**: Temporary files and utilities
+
+### Management Directories
+- **`vm_management/`**: VM lifecycle and monitoring scripts
+- **`dns_management/`**: DNS configuration and management tools
+- **`cleanup_scripts/`**: Repository and infrastructure cleanup utilities
 
 ## API Endpoints
 
@@ -308,7 +337,8 @@ ssh root@149.248.2.74 'birdc show route for 192.30.120.0/23'
 ssh root@149.248.2.74 'wg show'
 
 # Test anycast connectivity
-ping 192.30.120.10
+ping 192.30.120.100
+curl http://192.30.120.100:8080
 ```
 
 ### Adding New Nodes
