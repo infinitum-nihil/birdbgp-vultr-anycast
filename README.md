@@ -94,6 +94,66 @@ EWR (108.61.157.169) - ewr-bgp-quaternary [2c2g]
 - **Environment-Based Secrets**: Secure API key management without code exposure
 - **Multi-Region Deployment**: Easy geographic expansion with consistent configuration
 
+## IP Address Allocation
+
+### Currently Utilized IPv4 Addresses (from 192.30.120.0/23)
+
+**Anycast Service IP:**
+- `192.30.120.10` - Global anycast service endpoint
+
+**Geographic Allocation (/29 subnets per region):**
+
+**LAX Region (192.30.120.0/29):**
+- `192.30.120.1` - Vultr primary (✅ currently deployed)
+- `192.30.120.2` - Vultr secondary (reserved)
+- `192.30.120.3` - AWS primary (reserved)
+- `192.30.120.4` - GCP primary (reserved)
+
+**ORD Region (192.30.120.8/29):**
+- `192.30.120.9` - Vultr primary (✅ currently deployed)
+- `192.30.120.10` - Vultr secondary (reserved, overlaps with anycast IP)
+- `192.30.120.11` - AWS primary (reserved)
+
+**EWR Region (192.30.120.16/29):**
+- `192.30.120.17` - Vultr primary (✅ currently deployed)
+- `192.30.120.18` - Vultr secondary (reserved)
+- `192.30.120.19` - AWS primary (reserved)
+
+**MIA Region (192.30.120.24/29):**
+- `192.30.120.25` - Vultr primary (✅ currently deployed)
+- `192.30.120.26` - Vultr secondary (reserved)
+- `192.30.120.27` - AWS primary (reserved)
+
+### IPv6 Allocation (from 2620:71:4000::/48)
+
+**Global Prefix Announced:** `2620:71:4000::/48` from all 4 nodes
+
+**Current IPv6 Global Addresses:**
+- LAX: IPv6 address via Vultr (auto-assigned)
+- ORD: `2001:19f0:5c00:208e:5400:5ff:fe76:7cc3` (Vultr global)
+- MIA: `2001:19f0:9003:a46:5400:5ff:fe76:7ccc` (Vultr global) 
+- EWR: `2001:19f0:1000:3f27:5400:5ff:fe76:7cce` (Vultr global)
+
+### WireGuard Mesh Networks (Internal)
+
+**IPv4 Tunnel Network:** `10.10.10.0/24`
+- LAX: `10.10.10.1`
+- ORD: `10.10.10.2`
+- MIA: `10.10.10.3`
+- EWR: `10.10.10.4`
+
+**IPv6 Tunnel Network:** `fd00:10:10::/48`
+- LAX: `fd00:10:10::1`
+- ORD: `fd00:10:10::2`
+- MIA: `fd00:10:10::3`
+- EWR: `fd00:10:10::4`
+
+### Utilization Summary
+- **IPv4 Active**: 5 addresses (4 node IPs + 1 anycast) out of 512 available
+- **IPv4 Reserved**: 8 additional addresses for multi-provider expansion
+- **IPv6 Active**: Full /48 prefix globally announced and reachable
+- **Geographic Expansion**: Each region has /29 subnet allowing up to 8 IP addresses per region
+
 ## Prerequisites
 
 Before deploying, you need:
