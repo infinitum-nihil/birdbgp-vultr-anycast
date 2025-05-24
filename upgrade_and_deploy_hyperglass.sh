@@ -24,7 +24,15 @@ ANYCAST_IPV4="192.30.120.10"
 ANYCAST_IPV6="2620:71:4000::c01e:780a"
 DOMAIN="infinitum-nihil.com"
 SUBDOMAIN="lg"
-VULTR_API_KEY="OOBGITQGHOKATE5WMUYXCKE3UTA5O6OW4ENQ" # API key from statement of facts
+# Load API key from environment or .env file
+if [ -f ".env" ]; then
+    source .env
+fi
+
+if [ -z "$VULTR_API_KEY" ]; then
+    echo "ERROR: VULTR_API_KEY not set. Set environment variable or create .env file"
+    exit 1
+fi
 TRAEFIK_VERSION="v2.11.0"
 
 # Get server information from config file

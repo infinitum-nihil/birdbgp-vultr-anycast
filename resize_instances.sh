@@ -14,7 +14,15 @@ NC='\033[0m' # No Color
 
 # Configuration variables
 CONFIG_FILE="/home/normtodd/birdbgp/config_files/config.json"
-VULTR_API_KEY="OOBGITQGHOKATE5WMUYXCKE3UTA5O6OW4ENQ"
+# Load API key from environment or .env file
+if [ -f ".env" ]; then
+    source .env
+fi
+
+if [ -z "$VULTR_API_KEY" ]; then
+    echo "ERROR: VULTR_API_KEY not set. Set environment variable or create .env file"
+    exit 1
+fi
 
 # Get server information from config file
 LAX_IPV4=$(jq -r '.cloud_providers.vultr.servers."us-west".lax.ipv4.address' "$CONFIG_FILE")

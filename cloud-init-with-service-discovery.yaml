@@ -1,0 +1,491 @@
+#cloud-config
+
+#
+# Production BGP Anycast Mesh Node Bootstrap Configuration
+#
+# This cloud-init configuration creates a self-configuring BGP node that
+# automatically discovers its configuration through a service discovery API.
+# 
+# Features:
+# - Automatic external IP detection using icanhazip.com
+# - Service discovery API integration for dynamic configuration
+# - WireGuard mesh network setup with IPv4/IPv6 tunnels
+# - BIRD 2.17.1 routing daemon with dual-stack BGP support
+# - MD5 authenticated BGP sessions with Vultr infrastructure
+# - Anycast IP binding on dummy interfaces for proper announcement
+# - UFW firewall configuration with secure defaults
+# - Automated service startup and health monitoring
+#
+# Service Discovery Process:
+# 1. Detect external IPv4/IPv6 addresses
+# 2. Query service discovery API with external IP
+# 3. Receive node configuration (role, IPs, WireGuard keys)
+# 4. Generate BIRD, WireGuard, and firewall configurations
+# 5. Start services and establish BGP sessions
+#
+# Security Features:
+# - SSH access restricted to authorized key
+# - UFW firewall with minimal required ports
+# - BGP MD5 authentication
+# - WireGuard encrypted mesh tunnels
+# - Service-specific access controls
+#
+
+users:
+  - name: root
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHQl7/HQvl8o4AHj0KZeN8w7XpK1NuN5dHf8Xo1dNxpV nt@infinitum-nihil.com
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ufw
+  - curl
+  - jq
+  - build-essential
+  - autoconf
+  - pkg-config
+  - libreadline-dev
+  - libncurses5-dev
+  - bison
+  - flex
+  - libssl-dev
+  - wireguard
+  - wireguard-tools
+  - python3
+  - python3-pip
+
+write_files:
+  # Service Discovery Bootstrap Script
+  - path: /root/bootstrap-bgp-node.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+      
+      # Configuration
+      SERVICE_DISCOVERY_URL="http://149.248.2.74:5000"  # LAX Service Discovery API
+      LOG_FILE="/var/log/bgp-node-bootstrap.log"
+      
+      log() {
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+      }
+      
+      log "Starting BGP node bootstrap..."
+      
+      # Get external IPs using icanhazip.com (more reliable)
+      EXTERNAL_IPV4=$(curl -4 -s icanhazip.com)
+      EXTERNAL_IPV6=$(curl -6 -s icanhazip.com 2>/dev/null || echo "")
+      log "External IPv4: $EXTERNAL_IPV4"
+      log "External IPv6: $EXTERNAL_IPV6"
+      
+      # Discover node configuration from service discovery API
+      log "Querying service discovery API..."
+      NODE_CONFIG=$(curl -s -X POST "$SERVICE_DISCOVERY_URL/api/v1/nodes/discover" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"external_ip\": \"$EXTERNAL_IPV4\"}")
+      
+      if [ $? -ne 0 ] || [ -z "$NODE_CONFIG" ]; then
+          log "ERROR: Failed to get node configuration from service discovery"
+          exit 1
+      fi
+      
+      # Parse node configuration
+      NODE_ID=$(echo "$NODE_CONFIG" | jq -r '.node_id')
+      REGION=$(echo "$NODE_CONFIG" | jq -r '.region')
+      ROLE=$(echo "$NODE_CONFIG" | jq -r '.role')
+      ANNOUNCED_IP=$(echo "$NODE_CONFIG" | jq -r '.announced_ip')
+      ANYCAST_IP=$(echo "$NODE_CONFIG" | jq -r '.anycast_ip')
+      WG_IPV4=$(echo "$NODE_CONFIG" | jq -r '.wireguard.ipv4')
+      WG_IPV6=$(echo "$NODE_CONFIG" | jq -r '.wireguard.ipv6')
+      
+      log "Node: $NODE_ID ($ROLE) in $REGION"
+      log "Announced IP: $ANNOUNCED_IP"
+      log "Anycast IP: $ANYCAST_IP"
+      log "WireGuard: $WG_IPV4, $WG_IPV6"
+      
+      # Install BIRD 2.17.1 from source
+      log "Installing BIRD 2.17.1..."
+      cd /tmp
+      wget -q https://bird.network.cz/download/bird-2.17.1.tar.gz
+      tar -xzf bird-2.17.1.tar.gz
+      cd bird-2.17.1
+      ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var >/dev/null 2>&1
+      make -j$(nproc) >/dev/null 2>&1
+      make install >/dev/null 2>&1
+      log "BIRD installed successfully"
+      
+      # Create BIRD directories
+      mkdir -p /etc/bird /var/log/bird
+      
+      # Get WireGuard configuration
+      log "Getting WireGuard configuration..."
+      WG_CONFIG=$(curl -s "$SERVICE_DISCOVERY_URL/api/v1/nodes/$NODE_ID/wireguard")
+      
+      # Create WireGuard configuration
+      cat > /etc/wireguard/wg0.conf << EOF
+      $(echo "$WG_CONFIG" | jq -r '.interface | "[Interface]\nPrivateKey = " + .private_key + "\nAddress = " + (.address | join(", ")) + "\nListenPort = " + (.listen_port | tostring)')
+      
+      $(echo "$WG_CONFIG" | jq -r '.peers[] | "[Peer]\n# " + .description + "\nPublicKey = " + .public_key + "\nEndpoint = " + .endpoint + "\nAllowedIPs = " + (.allowed_ips | join(", ")) + "\nPersistentKeepalive = " + (.persistent_keepalive | tostring) + "\n"')
+      EOF
+      
+      log "WireGuard configuration created"
+      
+      # Configure dummy interfaces for announced IPs
+      log "Configuring announced IP addresses..."
+      ip link add dev dummy0 type dummy
+      ip link set dummy0 up
+      ip addr add $ANNOUNCED_IP/32 dev dummy0
+      ip addr add $ANYCAST_IP/32 dev dummy0
+      
+      # Make dummy interface persistent
+      cat >> /etc/systemd/network/dummy0.netdev << EOF
+      [NetDev]
+      Name=dummy0
+      Kind=dummy
+      EOF
+      
+      cat >> /etc/systemd/network/dummy0.network << EOF
+      [Match]
+      Name=dummy0
+      
+      [Network]
+      Address=$ANNOUNCED_IP/32
+      Address=$ANYCAST_IP/32
+      EOF
+      
+      # Get firewall rules and apply them
+      log "Configuring firewall..."
+      FIREWALL_CONFIG=$(curl -s "$SERVICE_DISCOVERY_URL/api/v1/firewall/rules")
+      
+      # Configure UFW with proper rules
+      ufw --force enable
+      ufw --force reset
+      
+      # Admin SSH
+      ufw allow from 207.231.1.46/32 to any port 22 proto tcp comment 'Admin SSH'
+      
+      # Vultr BGP
+      ufw allow from 169.254.169.254/32 to any port 179 proto tcp comment 'Vultr BGP IPv4'
+      ufw allow from 2001:19f0:ffff::1/128 to any port 179 proto tcp comment 'Vultr BGP IPv6'
+      
+      # iBGP mesh (WireGuard tunnel IPs)
+      ufw allow from 10.10.10.0/24 to any port 179 proto tcp comment 'iBGP mesh'
+      
+      # WireGuard mesh (Vultr IPs)
+      ufw allow from 149.248.2.74/32 to any port 51820 proto udp comment 'WG from LAX'
+      ufw allow from 45.76.19.248/32 to any port 51820 proto udp comment 'WG from ORD'
+      ufw allow from 45.77.74.248/32 to any port 51820 proto udp comment 'WG from MIA'
+      ufw allow from 108.61.142.4/32 to any port 51820 proto udp comment 'WG from EWR'
+      
+      # Allow all traffic on WireGuard interface
+      ufw allow in on wg0
+      ufw allow out on wg0
+      
+      # Anycast web services (on announced IPs only)
+      ufw allow to $ANNOUNCED_IP port 80 proto tcp comment 'HTTP to announced IP'
+      ufw allow to $ANNOUNCED_IP port 443 proto tcp comment 'HTTPS to announced IP'
+      ufw allow to $ANYCAST_IP port 80 proto tcp comment 'HTTP to anycast IP'
+      ufw allow to $ANYCAST_IP port 443 proto tcp comment 'HTTPS to anycast IP'
+      
+      # Looking glass API (mesh only)
+      ufw allow from 192.30.120.0/23 to any port 8080 proto tcp comment 'Looking glass API'
+      
+      log "Firewall configured"
+      
+      # Create BIRD configuration files
+      log "Creating BIRD configurations..."
+      
+      # BGP filters
+      cat > /etc/bird/bgp_filters.conf << 'EOF'
+      # BGP Import/Export Filters - BLOCK ALL DEFAULT ROUTES
+      
+      filter ibgp_import {
+        # REJECT any default routes first  
+        if net = 0.0.0.0/0 then reject;
+        if net = ::/0 then reject;
+        
+        # Accept our IPv4 prefix
+        if net = 192.30.120.0/23 then accept;
+        # Accept our IPv6 prefix  
+        if net = 2620:71:4000::/48 then accept;
+        
+        # Reject everything else
+        reject;
+      }
+      
+      filter ibgp_export {
+        # NEVER export default routes
+        if net = 0.0.0.0/0 then reject;
+        if net = ::/0 then reject;
+        
+        # Export our IPv4 prefix
+        if net = 192.30.120.0/23 then accept;
+        # Export our IPv6 prefix
+        if net = 2620:71:4000::/48 then accept;
+        
+        # Reject everything else
+        reject;
+      }
+      EOF
+      
+      # Main BIRD config
+      cat > /etc/bird/bird.conf << EOF
+      # BIRD Internet Routing Daemon Configuration
+      # $NODE_ID server ($ROLE) - Generated by Service Discovery
+      
+      include "/etc/bird/bgp_filters.conf";
+      
+      # Logging
+      log syslog all;
+      log stderr all;
+      
+      # Force router ID to external IPv4
+      router id $EXTERNAL_IPV4;
+      
+      # Basic protocols
+      protocol device {
+        scan time 10;
+      }
+      
+      protocol direct {
+        ipv4;
+        ipv6;
+        interface "dummy*";
+      }
+      
+      protocol kernel {
+        ipv4 {
+          export where source = RTS_BGP && net != 0.0.0.0/0 && net != ::/0;
+        };
+        learn;
+      }
+      
+      protocol kernel {
+        ipv6 {
+          export where source = RTS_BGP && net != 0.0.0.0/0 && net != ::/0;
+        };
+        learn;
+      }
+      
+      # Include static routes for anycast prefixes
+      include "/etc/bird/static.conf";
+      
+      # Include Vultr BGP configuration
+      include "/etc/bird/vultr.conf";
+      
+      # Include iBGP configuration
+      include "/etc/bird/ibgp.conf";
+      EOF
+      
+      # Static routes
+      cat > /etc/bird/static.conf << 'EOF'
+      # Static routes for our announced prefixes
+      
+      protocol static {
+        ipv4;
+        route 192.30.120.0/23 blackhole;
+      }
+      
+      protocol static {
+        ipv6;
+        route 2620:71:4000::/48 blackhole;
+      }
+      EOF
+      
+      # Vultr BGP
+      cat > /etc/bird/vultr.conf << EOF
+      # Vultr BGP Configuration
+      
+      define VULTR_ASN = 64515;
+      define OUR_ASN = 27218;
+      define LOCAL_IPV4 = $EXTERNAL_IPV4;
+      define LOCAL_IPV6 = $EXTERNAL_IPV6;
+      
+      protocol bgp vultr4 {
+        description "Vultr IPv4 BGP";
+        local as OUR_ASN;
+        source address LOCAL_IPV4;
+        neighbor 169.254.169.254 as VULTR_ASN;
+        multihop 2;
+        password "xV72GUaFMSYxNmee";
+        authentication md5;
+        ipv4 {
+          import none;
+          export filter {
+            if net = 192.30.120.0/23 then accept;
+            reject;
+          };
+          next hop self;
+        };
+      }
+      
+      # Only configure IPv6 BGP if we have a global IPv6 address
+      \$(if [ -n "\$EXTERNAL_IPV6" ]; then
+      echo 'protocol bgp vultr6 {
+        description "Vultr IPv6 BGP";
+        local as OUR_ASN;
+        source address LOCAL_IPV6;
+        neighbor 2001:19f0:ffff::1 as VULTR_ASN;
+        multihop 2;
+        password "xV72GUaFMSYxNmee";
+        authentication md5;
+        ipv6 {
+          import none;
+          export filter {
+            if net = 2620:71:4000::/48 then accept;
+            reject;
+          };
+          next hop self;
+        };
+      }'
+      else
+      echo '# IPv6 BGP disabled - no global IPv6 address available'
+      fi)
+      EOF
+      
+      # iBGP configuration
+      if [ "$ROLE" = "route_reflector" ]; then
+          # LAX is route reflector
+          cat > /etc/bird/ibgp.conf << EOF
+      # iBGP Configuration for route reflector (LAX)
+      
+      define SELF_ASN = 27218;
+      define LAX_WG_IP = 10.10.10.1;
+      define ORD_WG_IP = 10.10.10.2;
+      define MIA_WG_IP = 10.10.10.3;
+      define EWR_WG_IP = 10.10.10.4;
+      
+      protocol bgp ibgp_ord {
+        local as SELF_ASN;
+        source address LAX_WG_IP;
+        neighbor ORD_WG_IP as SELF_ASN;
+        description "iBGP to ORD via WireGuard";
+        rr client;
+        rr cluster id 1;
+        hold time 240;
+        keepalive time 80;
+        ipv4 {
+          import filter ibgp_import;
+          export filter ibgp_export;
+          next hop self;
+        };
+        ipv6 {
+          import filter ibgp_import;
+          export filter ibgp_export;
+          next hop self;
+        };
+      }
+      
+      protocol bgp ibgp_mia {
+        local as SELF_ASN;
+        source address LAX_WG_IP;
+        neighbor MIA_WG_IP as SELF_ASN;
+        description "iBGP to MIA via WireGuard";
+        rr client;
+        rr cluster id 1;
+        hold time 240;
+        keepalive time 80;
+        ipv4 {
+          import filter ibgp_import;
+          export filter ibgp_export;
+          next hop self;
+        };
+        ipv6 {
+          import filter ibgp_import;
+          export filter ibgp_export;
+          next hop self;
+        };
+      }
+      
+      protocol bgp ibgp_ewr {
+        local as SELF_ASN;
+        source address LAX_WG_IP;
+        neighbor EWR_WG_IP as SELF_ASN;
+        description "iBGP to EWR via WireGuard";
+        rr client;
+        rr cluster id 1;
+        hold time 240;
+        keepalive time 80;
+        ipv4 {
+          import filter ibgp_import;
+          export filter ibgp_export;
+          next hop self;
+        };
+        ipv6 {
+          import filter ibgp_import;
+          export filter ibgp_export;
+          next hop self;
+        };
+      }
+      EOF
+      else
+          # Client nodes connect to LAX
+          cat > /etc/bird/ibgp.conf << EOF
+      # iBGP Configuration for client node ($NODE_ID)
+      
+      define SELF_ASN = 27218;
+      define ${NODE_ID^^}_WG_IP = $WG_IPV4;
+      define LAX_WG_IP = 10.10.10.1;
+      
+      protocol bgp ibgp_lax {
+        local as SELF_ASN;
+        source address ${NODE_ID^^}_WG_IP;
+        neighbor LAX_WG_IP as SELF_ASN;
+        description "iBGP to LAX (route reflector) via WireGuard";
+        hold time 240;
+        keepalive time 80;
+        ipv4 {
+          import filter ibgp_import;
+          export filter ibgp_export;
+          next hop self;
+        };
+        ipv6 {
+          import filter ibgp_import;
+          export filter ibgp_export;
+          next hop self;
+        };
+      }
+      EOF
+      fi
+      
+      # Create BIRD systemd service
+      cat > /etc/systemd/system/bird.service << 'EOF'
+      [Unit]
+      Description=BIRD Internet Routing Daemon
+      After=network.target
+      
+      [Service]
+      Type=forking
+      PIDFile=/var/run/bird.pid
+      ExecStart=/usr/sbin/bird -c /etc/bird/bird.conf -P /var/run/bird.pid
+      ExecReload=/bin/kill -HUP $MAINPID
+      Restart=on-failure
+      
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+      
+      # Enable and start services
+      systemctl daemon-reload
+      systemctl enable systemd-networkd
+      systemctl enable wg-quick@wg0
+      systemctl enable bird
+      
+      # Start services in order
+      systemctl restart systemd-networkd
+      sleep 2
+      systemctl start wg-quick@wg0
+      sleep 5
+      systemctl start bird
+      
+      log "BGP node $NODE_ID bootstrap complete!"
+      log "Announced IP: $ANNOUNCED_IP"
+      log "Anycast IP: $ANYCAST_IP"
+      log "WireGuard: $WG_IPV4, $WG_IPV6"
+
+runcmd:
+  - /root/bootstrap-bgp-node.sh
+
+final_message: "BGP mesh node with service discovery configuration complete!"

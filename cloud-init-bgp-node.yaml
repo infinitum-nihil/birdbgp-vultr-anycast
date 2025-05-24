@@ -1,0 +1,340 @@
+#cloud-config
+
+# BGP Mesh Node Cloud-Init Configuration
+# This will create a fully configured BGP speaker with WireGuard mesh and BIRD routing
+
+users:
+  - name: root
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHQl7/HQvl8o4AHj0KZeN8w7XpK1NuN5dHf8Xo1dNxpV nt@infinitum-nihil.com
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ufw
+  - curl
+  - jq
+  - build-essential
+  - autoconf
+  - pkg-config
+  - libreadline-dev
+  - libncurses5-dev
+  - bison
+  - flex
+  - libssl-dev
+  - wireguard
+  - wireguard-tools
+
+write_files:
+  # BIRD BGP filters - block default routes
+  - path: /etc/bird/bgp_filters.conf
+    content: |
+      # BGP Import/Export Filters - BLOCK ALL DEFAULT ROUTES
+      
+      filter ibgp_import {
+        # REJECT any default routes first  
+        if net = 0.0.0.0/0 then reject;
+        if net = ::/0 then reject;
+        
+        # Accept our IPv4 prefix
+        if net = 192.30.120.0/23 then accept;
+        # Accept our IPv6 prefix  
+        if net = 2620:71:4000::/48 then accept;
+        
+        # Reject everything else
+        reject;
+      }
+      
+      filter ibgp_export {
+        # NEVER export default routes
+        if net = 0.0.0.0/0 then reject;
+        if net = ::/0 then reject;
+        
+        # Export our IPv4 prefix
+        if net = 192.30.120.0/23 then accept;
+        # Export our IPv6 prefix
+        if net = 2620:71:4000::/48 then accept;
+        
+        # Reject everything else
+        reject;
+      }
+
+  # BIRD main configuration template  
+  - path: /etc/bird/bird.conf.template
+    content: |
+      # BIRD Internet Routing Daemon Configuration
+      # NODE_NAME server (NODE_ROLE)
+      
+      include "/etc/bird/bgp_filters.conf";
+      
+      # Logging
+      log syslog all;
+      log stderr all;
+      
+      # Force router ID to external IP
+      router id VULTR_IP;
+      
+      # Basic protocols
+      protocol device {
+        scan time 10;
+      }
+      
+      protocol direct {
+        ipv4;
+        ipv6;
+      }
+      
+      protocol kernel {
+        ipv4 {
+          export where source = RTS_BGP && net != 0.0.0.0/0 && net != ::/0;
+        };
+        learn;
+      }
+      
+      protocol kernel {
+        ipv6 {
+          export where source = RTS_BGP && net != 0.0.0.0/0 && net != ::/0;
+        };
+        learn;
+      }
+      
+      # Include static routes for anycast prefixes
+      include "/etc/bird/static.conf";
+      
+      # Include Vultr BGP configuration
+      include "/etc/bird/vultr.conf";
+      
+      # Include iBGP configuration
+      include "/etc/bird/ibgp.conf";
+
+  # Static routes configuration
+  - path: /etc/bird/static.conf
+    content: |
+      # Static routes for our announced prefixes
+      
+      protocol static {
+        ipv4;
+        route 192.30.120.0/23 blackhole;
+      }
+      
+      protocol static {
+        ipv6;
+        route 2620:71:4000::/48 blackhole;
+      }
+
+  # Vultr BGP configuration template
+  - path: /etc/bird/vultr.conf.template
+    content: |
+      # Vultr BGP Configuration
+      
+      # Define Vultr's ASN and ours
+      define VULTR_ASN = 64515;
+      define OUR_ASN = 27218;
+      
+      # Define our local IP for source addressing
+      define LOCAL_IP = VULTR_IP;
+      
+      # Vultr BGP peering - explicitly use our external IP as source
+      protocol bgp vultr4 {
+        description "Vultr IPv4 BGP";
+        local as OUR_ASN;
+        source address LOCAL_IP;
+        neighbor 169.254.169.254 as VULTR_ASN;
+        multihop 2;
+        password "xV72GUaFMSYxNmee";
+        ipv4 {
+          import none;
+          export filter {
+            if net = 192.30.120.0/23 then accept;
+            reject;
+          };
+          next hop self;
+        };
+      }
+      
+      protocol bgp vultr6 {
+        description "Vultr IPv6 BGP";
+        local as OUR_ASN;
+        source address LOCAL_IP;
+        neighbor 2001:19f0:ffff::1 as VULTR_ASN;
+        multihop 2;
+        password "xV72GUaFMSYxNmee";
+        ipv6 {
+          import none;
+          export filter {
+            if net = 2620:71:4000::/48 then accept;
+            reject;
+          };
+          next hop self;
+        };
+      }
+
+  # Setup script that will configure everything based on node
+  - path: /root/setup-bgp-node.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      
+      # Get external IP
+      EXTERNAL_IP=$(curl -s http://169.254.169.254/v1/interfaces/public/0/ipv4/address)
+      
+      # Determine node based on IP
+      case $EXTERNAL_IP in
+        "66.42.113.101")
+          NODE_NAME="ord"
+          NODE_ROLE="secondary"
+          WG_IPV4="10.10.10.2"
+          WG_IPV6="fd00:10:10::2"
+          WG_PRIVATE="MPHM4EwaePZcWzSybki8B53hdCDvXtMklQg2euokvn8="
+          ;;
+        "149.28.108.180")
+          NODE_NAME="mia"
+          NODE_ROLE="tertiary"  
+          WG_IPV4="10.10.10.3"
+          WG_IPV6="fd00:10:10::3"
+          WG_PRIVATE="KDNHB73UY2tgfzKiHPFUNg548ZgPInUjPLRIojpXxkI="
+          ;;
+        "66.135.18.138")
+          NODE_NAME="ewr"
+          NODE_ROLE="quaternary"
+          WG_IPV4="10.10.10.4"
+          WG_IPV6="fd00:10:10::4"
+          WG_PRIVATE="SPBeS4yfWGXcArsd6QX0Ia/7NL+dotBlcMHqz9Z60VU="
+          ;;
+        *)
+          echo "Unknown IP: $EXTERNAL_IP"
+          exit 1
+          ;;
+      esac
+      
+      echo "Configuring $NODE_NAME ($NODE_ROLE) with IP $EXTERNAL_IP"
+      
+      # Install BIRD 2.17.1 from source
+      cd /tmp
+      wget https://bird.network.cz/download/bird-2.17.1.tar.gz
+      tar -xzf bird-2.17.1.tar.gz
+      cd bird-2.17.1
+      ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var
+      make -j$(nproc)
+      make install
+      
+      # Create BIRD directories
+      mkdir -p /etc/bird
+      mkdir -p /var/log/bird
+      
+      # Configure BIRD configs
+      sed "s/VULTR_IP/$EXTERNAL_IP/g; s/NODE_NAME/$NODE_NAME/g; s/NODE_ROLE/$NODE_ROLE/g" /etc/bird/bird.conf.template > /etc/bird/bird.conf
+      sed "s/VULTR_IP/$EXTERNAL_IP/g" /etc/bird/vultr.conf.template > /etc/bird/vultr.conf
+      
+      # Create iBGP configuration (client to LAX route reflector)
+      cat > /etc/bird/ibgp.conf << EOF
+      # iBGP Configuration for mesh network
+      # $NODE_NAME connects to LAX route reflector (using WireGuard IPs)
+      
+      define SELF_ASN = 27218;
+      
+      # Define WireGuard tunnel IPs
+      define ${NODE_NAME^^}_WG_IP = $WG_IPV4;
+      define LAX_WG_IP = 10.10.10.1;
+      
+      protocol bgp ibgp_lax {
+        local as SELF_ASN;
+        source address ${NODE_NAME^^}_WG_IP;
+        neighbor LAX_WG_IP as SELF_ASN;
+        description "iBGP to LAX (route reflector) via WireGuard";
+        hold time 240;
+        keepalive time 80;
+        ipv4 {
+          import filter ibgp_import;
+          export filter ibgp_export;
+          next hop self;
+        };
+        ipv6 {
+          import filter ibgp_import;
+          export filter ibgp_export;
+          next hop self;
+        };
+      }
+      EOF
+      
+      # Create WireGuard configuration
+      cat > /etc/wireguard/wg0.conf << EOF
+      [Interface]
+      PrivateKey = $WG_PRIVATE
+      Address = $WG_IPV4/24, $WG_IPV6/64
+      ListenPort = 51820
+      
+      [Peer]
+      # LAX
+      PublicKey = kGxVggzlhlF1WQ0i1azEpfZDChxE5B54zkOdxbsOw2g=
+      Endpoint = 149.248.2.74:51820
+      AllowedIPs = 10.10.10.1/32, fd00:10:10::1/128
+      PersistentKeepalive = 25
+      
+      [Peer]
+      # ORD
+      PublicKey = IGDoiqUswCXmKkquOvjHg85Ch9SblGUY2/bGkzlKOzM=
+      Endpoint = 66.42.113.101:51820
+      AllowedIPs = 10.10.10.2/32, fd00:10:10::2/128
+      PersistentKeepalive = 25
+      
+      [Peer]
+      # MIA
+      PublicKey = xOlrncxW1gE3CLw7cexpr341Rakggk6smEhk4x9jPmA=
+      Endpoint = 149.28.108.180:51820
+      AllowedIPs = 10.10.10.3/32, fd00:10:10::3/128
+      PersistentKeepalive = 25
+      
+      [Peer]
+      # EWR
+      PublicKey = qCYHzXTiIMzuCgAdMV7yZEEQpRD2XJlZY3PnjOCbeQM=
+      Endpoint = 66.135.18.138:51820
+      AllowedIPs = 10.10.10.4/32, fd00:10:10::4/128
+      PersistentKeepalive = 25
+      EOF
+      
+      # Remove self from WireGuard peers
+      sed -i "/# $NODE_NAME/,/PersistentKeepalive = 25/d" /etc/wireguard/wg0.conf
+      
+      # Configure UFW
+      ufw --force enable
+      ufw allow 22/tcp
+      ufw allow 179/tcp  # BGP
+      ufw allow 51820/udp  # WireGuard
+      ufw allow in on wg0
+      ufw allow out on wg0
+      
+      # Create BIRD systemd service
+      cat > /etc/systemd/system/bird.service << 'EOF'
+      [Unit]
+      Description=BIRD Internet Routing Daemon
+      After=network.target
+      
+      [Service]
+      Type=forking
+      PIDFile=/var/run/bird.pid
+      ExecStart=/usr/sbin/bird -c /etc/bird/bird.conf -P /var/run/bird.pid
+      ExecReload=/bin/kill -HUP $MAINPID
+      Restart=on-failure
+      
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+      
+      # Enable and start services
+      systemctl daemon-reload
+      systemctl enable wg-quick@wg0
+      systemctl enable bird
+      
+      # Start WireGuard first, then BIRD
+      systemctl start wg-quick@wg0
+      sleep 5
+      systemctl start bird
+      
+      echo "BGP node $NODE_NAME setup complete!"
+
+runcmd:
+  - /root/setup-bgp-node.sh
+
+final_message: "BGP mesh node configuration complete!"

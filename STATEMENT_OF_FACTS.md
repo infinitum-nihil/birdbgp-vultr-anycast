@@ -43,3 +43,16 @@
   - Neighbor: 169.254.169.254 (IPv4) and 2001:19f0:ffff::1 (IPv6)
   - BGP password: xV72GUaFMSYxNmee
   - Multihop: 2
+
+## Vultr API
+- API Key: [REDACTED - Load from environment variable VULTR_API_KEY]
+- Proper API call format:
+```bash
+curl "https://api.vultr.com/v2/endpoint" \
+  -X POST \
+  -H "Authorization: Bearer ${VULTR_API_KEY}" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "key": "value"
+  }'
+```

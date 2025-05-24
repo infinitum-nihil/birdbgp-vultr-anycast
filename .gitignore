@@ -1,5 +1,11 @@
-# Environment variables
+# Environment variables and sensitive data
 .env
+**/correct_wg_keys.txt
+**/*_keys.txt
+
+# Python cache
+__pycache__/
+*.pyc
 
 # Deployment-generated files
 *_id.txt

@@ -14,7 +14,8 @@
     },
     "wireguard": {
       "port": 51820,
-      "subnet": "10.10.10.0/24"
+      "ipv4_subnet": "10.10.10.0/24",
+      "ipv6_subnet": "fd00:10:10::/48"
     }
   },
   "nodes": {
@@ -22,28 +23,32 @@
       "role": "primary",
       "location": "Los Angeles",
       "vultr_ip": "149.248.2.74",
-      "wireguard_ip": "10.10.10.1",
+      "wireguard_ipv4": "10.10.10.1",
+      "wireguard_ipv6": "fd00:10:10::1",
       "is_route_reflector": true
     },
     "ord": {
       "role": "secondary",
       "location": "Chicago",
       "vultr_ip": "66.42.113.101",
-      "wireguard_ip": "10.10.10.2",
+      "wireguard_ipv4": "10.10.10.2",
+      "wireguard_ipv6": "fd00:10:10::2",
       "is_route_reflector": false
     },
     "mia": {
       "role": "tertiary",
       "location": "Miami",
       "vultr_ip": "149.28.108.180",
-      "wireguard_ip": "10.10.10.3",
+      "wireguard_ipv4": "10.10.10.3",
+      "wireguard_ipv6": "fd00:10:10::3",
       "is_route_reflector": false
     },
     "ewr": {
       "role": "quaternary",
       "location": "Newark",
       "vultr_ip": "66.135.18.138",
-      "wireguard_ip": "10.10.10.4",
+      "wireguard_ipv4": "10.10.10.4",
+      "wireguard_ipv6": "fd00:10:10::4",
       "is_route_reflector": false
     }
   },
@@ -57,7 +62,7 @@
   },
   "templates": {
     "bird_base": "# BIRD Internet Routing Daemon Configuration\n# {NODE_NAME} server ({NODE_ROLE})\n\n# Logging\nlog syslog all;\nlog stderr all;\n\n# Force router ID to external IP\nrouter id {VULTR_IP};\n\n# Basic protocols\nprotocol device {\n  scan time 10;\n}\n\nprotocol direct {\n  ipv4;\n  ipv6;\n}\n\nprotocol kernel {\n  ipv4 {\n    export all;\n  };\n  learn;\n}\n\nprotocol kernel {\n  ipv6 {\n    export all;\n  };\n  learn;\n}\n\n# Include static routes for anycast prefixes\ninclude \"/etc/bird/static.conf\";\n\n# Include Vultr BGP configuration\ninclude \"/etc/bird/vultr.conf\";\n\n# Include iBGP configuration\ninclude \"/etc/bird/ibgp.conf\";\n",
-    "static_routes": "# Static routes for the ARIN assigned ranges\n\n# Define our ARIN assigned address blocks\ndefine OUR_IPV4_PREFIX = {IPV4_PREFIX};\ndefine OUR_IPV6_PREFIX = {IPV6_PREFIX};\n\n# Static routes for the anycast ranges\nprotocol static static_anycast_v4 {\n  ipv4 {\n    preference 110;\n  };\n  route OUR_IPV4_PREFIX reject;\n}\n\nprotocol static static_anycast_v6 {\n  ipv6 {\n    preference 110;\n  };\n  route OUR_IPV6_PREFIX reject;\n}\n",
+    "static_routes": "# No static routes needed - kernel routes are sufficient for BGP\n",
     "vultr_bgp": "# Vultr BGP Configuration\n\n# Define Vultr's ASN and ours\ndefine VULTR_ASN = {VULTR_ASN};\ndefine OUR_ASN = {OUR_ASN};\n\n# Define our local IP for source addressing\ndefine LOCAL_IP = {VULTR_IP};\n\n# Vultr BGP peering - explicitly use our external IP as source\nprotocol bgp vultr4 {\n  description \"Vultr IPv4 BGP\";\n  local as OUR_ASN;\n  source address LOCAL_IP;\n  neighbor {VULTR_IPV4_NEIGHBOR} as VULTR_ASN;\n  multihop {VULTR_MULTIHOP};\n  password \"{VULTR_PASSWORD}\";\n  ipv4 {\n    import none;\n    export filter {\n      if net = {IPV4_PREFIX} then accept;\n      reject;\n    };\n    next hop self;\n  };\n}\n\nprotocol bgp vultr6 {\n  description \"Vultr IPv6 BGP\";\n  local as OUR_ASN;\n  source address LOCAL_IP;\n  neighbor {VULTR_IPV6_NEIGHBOR} as VULTR_ASN;\n  multihop {VULTR_MULTIHOP};\n  password \"{VULTR_PASSWORD}\";\n  ipv6 {\n    import none;\n    export filter {\n      if net = {IPV6_PREFIX} then accept;\n      reject;\n    };\n    next hop self;\n  };\n}\n",
     "ibgp_rr": "# iBGP Configuration for mesh network\n# LAX is the route reflector (using WireGuard IPs for iBGP)\n\ndefine SELF_ASN = {OUR_ASN};\n\n# Define WireGuard tunnel IPs for iBGP\ndefine LAX_WG_IP = 10.10.10.1;\ndefine ORD_WG_IP = 10.10.10.2;\ndefine MIA_WG_IP = 10.10.10.3;\ndefine EWR_WG_IP = 10.10.10.4;\n\nprotocol bgp ibgp_ord {\n  local as SELF_ASN;\n  source address LAX_WG_IP;\n  neighbor ORD_WG_IP as SELF_ASN;\n  description \"iBGP to ORD via WireGuard\";\n  rr client;\n  rr cluster id 1;\n  hold time 240;\n  keepalive time 80;\n  ipv4 {\n    import all;\n    export all;\n    next hop self;\n  };\n  ipv6 {\n    import all;\n    export all;\n    next hop self;\n  };\n}\n\nprotocol bgp ibgp_mia {\n  local as SELF_ASN;\n  source address LAX_WG_IP;\n  neighbor MIA_WG_IP as SELF_ASN;\n  description \"iBGP to MIA via WireGuard\";\n  rr client;\n  rr cluster id 1;\n  hold time 240;\n  keepalive time 80;\n  ipv4 {\n    import all;\n    export all;\n    next hop self;\n  };\n  ipv6 {\n    import all;\n    export all;\n    next hop self;\n  };\n}\n\nprotocol bgp ibgp_ewr {\n  local as SELF_ASN;\n  source address LAX_WG_IP;\n  neighbor EWR_WG_IP as SELF_ASN;\n  description \"iBGP to EWR via WireGuard\";\n  rr client;\n  rr cluster id 1;\n  hold time 240;\n  keepalive time 80;\n  ipv4 {\n    import all;\n    export all;\n    next hop self;\n  };\n  ipv6 {\n    import all;\n    export all;\n    next hop self;\n  };\n}\n",
     "ibgp_client": "# iBGP Configuration for mesh network\n# {NODE_NAME} connects to LAX route reflector (using WireGuard IPs)\n\ndefine SELF_ASN = {OUR_ASN};\n\n# Define WireGuard tunnel IPs\ndefine {NODE_NAME_UPPER}_WG_IP = {NODE_WG_IP};\ndefine LAX_WG_IP = 10.10.10.1;\n\nprotocol bgp ibgp_lax {\n  local as SELF_ASN;\n  source address {NODE_NAME_UPPER}_WG_IP;\n  neighbor LAX_WG_IP as SELF_ASN;\n  description \"iBGP to LAX (route reflector) via WireGuard\";\n  hold time 240;\n  keepalive time 80;\n  ipv4 {\n    import all;\n    export all;\n    next hop self;\n  };\n  ipv6 {\n    import all;\n    export all;\n    next hop self;\n  };\n}\n"

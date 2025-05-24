@@ -1,0 +1,197 @@
+{
+  "service_info": {
+    "name": "BGP Anycast Mesh Service Discovery",
+    "version": "1.0.0",
+    "asn": 27218,
+    "organization": "Infinitum Nihil",
+    "last_updated": "2025-05-24T00:00:00Z"
+  },
+  "network_allocation": {
+    "ipv4_prefix": "192.30.120.0/23",
+    "ipv6_prefix": "2620:71:4000::/48",
+    "anycast_config": {
+      "global_service_ip": "192.30.120.10",
+      "service_ports": [80, 443]
+    },
+    "geographic_allocation": {
+      "lax": {
+        "subnet": "192.30.120.0/29",
+        "vultr_primary": "192.30.120.1",
+        "vultr_secondary": "192.30.120.2",
+        "aws_primary": "192.30.120.3",
+        "gcp_primary": "192.30.120.4"
+      },
+      "ord": {
+        "subnet": "192.30.120.8/29",
+        "vultr_primary": "192.30.120.9",
+        "vultr_secondary": "192.30.120.10",
+        "aws_primary": "192.30.120.11"
+      },
+      "ewr": {
+        "subnet": "192.30.120.16/29",
+        "vultr_primary": "192.30.120.17",
+        "vultr_secondary": "192.30.120.18",
+        "aws_primary": "192.30.120.19"
+      },
+      "mia": {
+        "subnet": "192.30.120.24/29",
+        "vultr_primary": "192.30.120.25",
+        "vultr_secondary": "192.30.120.26",
+        "aws_primary": "192.30.120.27"
+      }
+    }
+  },
+  "wireguard_config": {
+    "mesh_networks": {
+      "ipv4_subnet": "10.10.10.0/24",
+      "ipv6_subnet": "fd00:10:10::/48",
+      "port": 51820,
+      "keepalive": 25
+    },
+    "node_assignments": {
+      "lax": {
+        "ipv4": "10.10.10.1",
+        "ipv6": "fd00:10:10::1",
+        "public_key": "kGxVggzlhlF1WQ0i1azEpfZDChxE5B54zkOdxbsOw2g=",
+        "private_key": "0AWsUq19oUnfmlAlkfAhLOLkLy2xv5Vu0s5wu5VELU8=",
+        "vultr_endpoint": "149.248.2.74:51820",
+        "role": "route_reflector",
+        "announced_ip": "192.30.120.1",
+        "region": "lax",
+        "provider": "vultr"
+      },
+      "ord": {
+        "ipv4": "10.10.10.2",
+        "ipv6": "fd00:10:10::2",
+        "public_key": "IGDoiqUswCXmKkquOvjHg85Ch9SblGUY2/bGkzlKOzM=",
+        "private_key": "MPHM4EwaePZcWzSybki8B53hdCDvXtMklQg2euokvn8=",
+        "vultr_endpoint": "45.76.29.217:51820",
+        "role": "secondary",
+        "announced_ip": "192.30.120.9",
+        "region": "ord",
+        "provider": "vultr"
+      },
+      "mia": {
+        "ipv4": "10.10.10.3",
+        "ipv6": "fd00:10:10::3",
+        "public_key": "xOlrncxW1gE3CLw7cexpr341Rakggk6smEhk4x9jPmA=",
+        "private_key": "KDNHB73UY2tgfzKiHPFUNg548ZgPInUjPLRIojpXxkI=",
+        "vultr_endpoint": "144.202.40.220:51820",
+        "role": "tertiary",
+        "announced_ip": "192.30.120.25",
+        "region": "mia", 
+        "provider": "vultr"
+      },
+      "ewr": {
+        "ipv4": "10.10.10.4",
+        "ipv6": "fd00:10:10::4",
+        "public_key": "qCYHzXTiIMzuCgAdMV7yZEEQpRD2XJlZY3PnjOCbeQM=",
+        "private_key": "SPBeS4yfWGXcArsd6QX0Ia/7NL+dotBlcMHqz9Z60VU=",
+        "vultr_endpoint": "207.246.91.55:51820",
+        "role": "quaternary",
+        "announced_ip": "192.30.120.17",
+        "region": "ewr",
+        "provider": "vultr"
+      }
+    },
+    "bgp_timers": {
+      "hold_time": 240,
+      "keepalive_time": 80
+    }
+  },
+  "firewall_config": {
+    "announced_ip_rules": {
+      "description": "Minimal attack surface for announced IPs",
+      "default_policy": "deny",
+      "allowed_services": [
+        {"port": 80, "protocol": "tcp", "source": "any", "description": "HTTP anycast"},
+        {"port": 443, "protocol": "tcp", "source": "any", "description": "HTTPS anycast"},
+        {"port": 8080, "protocol": "tcp", "source": "bgp_mesh_announced", "description": "Looking glass API - mesh only"}
+      ]
+    },
+    "vultr_ip_rules": {
+      "description": "BGP and management on Vultr dynamic IPs",
+      "bgp_access": [
+        {"port": 179, "protocol": "tcp", "source": "169.254.169.254/32", "description": "Vultr BGP IPv4"},
+        {"port": 179, "protocol": "tcp", "source": "2001:19f0:ffff::1/128", "description": "Vultr BGP IPv6"},
+        {"port": 179, "protocol": "tcp", "source": "bgp_mesh_tunnel", "description": "iBGP between nodes"}
+      ],
+      "wireguard_access": [
+        {"port": 51820, "protocol": "udp", "source": "bgp_mesh_vultr", "description": "WireGuard mesh"}
+      ],
+      "admin_access": [
+        {"port": 22, "protocol": "tcp", "source": "207.231.1.46/32", "description": "Admin SSH"}
+      ]
+    },
+    "source_groups": {
+      "bgp_mesh_announced": [
+        "192.30.120.1/32",
+        "192.30.120.9/32", 
+        "192.30.120.17/32",
+        "192.30.120.25/32"
+      ],
+      "bgp_mesh_tunnel": [
+        "10.10.10.1/32",
+        "10.10.10.2/32",
+        "10.10.10.3/32", 
+        "10.10.10.4/32"
+      ],
+      "bgp_mesh_vultr": [
+        "149.248.2.74/32",
+        "45.76.29.217/32",
+        "144.202.40.220/32",
+        "207.246.91.55/32"
+      ]
+    }
+  },
+  "bgp_config": {
+    "global": {
+      "our_asn": 27218,
+      "vultr_asn": 64515,
+      "vultr_bgp": {
+        "ipv4_neighbor": "169.254.169.254",
+        "ipv6_neighbor": "2001:19f0:ffff::1",
+        "password": "xV72GUaFMSYxNmee",
+        "multihop": 2
+      },
+      "announcements": {
+        "ipv4": ["192.30.120.0/23"],
+        "ipv6": ["2620:71:4000::/48"]
+      }
+    },
+    "route_filters": {
+      "ibgp_import": {
+        "description": "Only allow our announced prefixes, block default routes",
+        "rules": [
+          {"action": "reject", "prefix": "0.0.0.0/0"},
+          {"action": "reject", "prefix": "::/0"},
+          {"action": "accept", "prefix": "192.30.120.0/23"},
+          {"action": "accept", "prefix": "2620:71:4000::/48"},
+          {"action": "reject", "prefix": "default"}
+        ]
+      },
+      "ibgp_export": {
+        "description": "Only export our announced prefixes",
+        "rules": [
+          {"action": "reject", "prefix": "0.0.0.0/0"},
+          {"action": "reject", "prefix": "::/0"},
+          {"action": "accept", "prefix": "192.30.120.0/23"},
+          {"action": "accept", "prefix": "2620:71:4000::/48"},
+          {"action": "reject", "prefix": "default"}
+        ]
+      }
+    }
+  },
+  "service_specific": {
+    "looking_glass_port": 8080,
+    "bgp_port": 179,
+    "wireguard_port": 51820,
+    "discovery_endpoints": {
+      "node_config": "GET /api/v1/nodes/{region}/config",
+      "wg_config": "GET /api/v1/nodes/{node_id}/wireguard",
+      "firewall_rules": "GET /api/v1/firewall/rules",
+      "register_node": "POST /api/v1/nodes/register",
+      "heartbeat": "POST /api/v1/nodes/{node_id}/heartbeat"
+    }
+  }
+}
