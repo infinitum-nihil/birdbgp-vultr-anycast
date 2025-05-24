@@ -22,38 +22,46 @@ By using this document, you acknowledge that you have read and understood this d
 
 # Production BGP Anycast Mesh with Service Discovery
 
-## 🚀 CURRENT STATUS: PRODUCTION READY
+## 🚀 CURRENT STATUS: PRODUCTION READY - DUAL-STACK ANYCAST OPERATIONAL
 
-This project has successfully deployed a **production-ready BGP anycast mesh** with service discovery architecture, providing high availability across multiple geographic locations with automatic failover and self-configuring nodes.
+This project has successfully deployed a **production-ready dual-stack BGP anycast mesh** with service discovery architecture, providing high availability across multiple geographic locations with automatic failover and self-configuring nodes.
 
 ### ✅ **Deployed Infrastructure:**
 - **Service Discovery API**: RESTful API for dynamic node configuration management
 - **BGP Anycast Mesh**: 4-node topology with route reflection (LAX as route reflector)
 - **WireGuard Mesh Network**: Encrypted IPv4/IPv6 tunnels between all nodes
-- **Dual-Stack BGP**: IPv4/IPv6 BGP sessions where supported
-- **Global Reachability**: 192.30.120.0/23 successfully announced and globally accessible
+- **True Dual-Stack BGP**: IPv4 AND IPv6 BGP sessions established on all nodes
+- **Global IPv4 Reachability**: 192.30.120.0/23 successfully announced and globally accessible
+- **Global IPv6 Reachability**: 2620:71:4000::/48 successfully announced and globally accessible
 - **Automated Deployment**: Cloud-init bootstrap with service discovery integration
+- **Production Instances**: 2c2g (2 CPU, 2GB RAM) for full table BGP + Docker capabilities
 
 ### 🌍 **Current Network Topology:**
 ```
 LAX (149.248.2.74) - Route Reflector, Service Discovery Endpoint
-├── IPv4/IPv6 BGP to Vultr ✅
-├── iBGP to ORD, MIA, EWR ✅
+├── IPv4/IPv6 BGP to Vultr ✅ (ESTABLISHED)
+├── iBGP to ORD, MIA, EWR ✅ (ALL ESTABLISHED)
 └── Anycast IPs: 192.30.120.1, 192.30.120.10
 
-ORD (45.76.29.217) - Secondary Node
-├── IPv4 BGP to Vultr ✅  
-├── iBGP to LAX ✅
+ORD (45.76.17.217) - ord-bgp-secondary [2c2g]
+├── IPv4 BGP to Vultr ✅ (ESTABLISHED)
+├── IPv6 BGP to Vultr ✅ (ESTABLISHED) 
+├── iBGP to LAX ✅ (ESTABLISHED)
+├── IPv6 Global: 2001:19f0:5c00:208e:5400:5ff:fe76:7cc3
 └── Anycast IP: 192.30.120.9
 
-MIA (144.202.40.220) - Tertiary Node
-├── IPv4/IPv6 BGP to Vultr ✅
-├── iBGP to LAX ✅
+MIA (207.246.76.162) - mia-bgp-tertiary [2c2g]
+├── IPv4 BGP to Vultr ✅ (ESTABLISHED)
+├── IPv6 BGP to Vultr ✅ (ESTABLISHED)
+├── iBGP to LAX ✅ (ESTABLISHED)
+├── IPv6 Global: 2001:19f0:9003:a46:5400:5ff:fe76:7ccc
 └── Anycast IP: 192.30.120.25
 
-EWR (207.246.91.55) - Quaternary Node
-├── IPv4/IPv6 BGP to Vultr ✅
-├── iBGP to LAX ✅
+EWR (108.61.157.169) - ewr-bgp-quaternary [2c2g]
+├── IPv4 BGP to Vultr ✅ (ESTABLISHED)
+├── IPv6 BGP to Vultr ✅ (ESTABLISHED)
+├── iBGP to LAX ✅ (ESTABLISHED)
+├── IPv6 Global: 2001:19f0:1000:3f27:5400:5ff:fe76:7cce
 └── Anycast IP: 192.30.120.17
 ```
 
@@ -105,22 +113,31 @@ Before deploying, you need:
 ./deploy_production_mesh.sh
 ```
 
-### 2. Test Anycast Connectivity
+### 2. Test Dual-Stack Anycast Connectivity
 ```bash
-# Verify global reachability
+# Verify IPv4 global reachability
 ping 192.30.120.10
 
-# Check BGP announcements
+# Verify IPv6 global reachability (if IPv6 connectivity available)
+ping6 2620:71:4000::10
+
+# Check BGP announcements and service status
 curl http://149.248.2.74:5000/api/v1/status
 ```
 
-### 3. Monitor BGP Sessions
+### 3. Monitor Dual-Stack BGP Sessions
 ```bash
-# Check BGP protocols on all nodes
-ssh root@149.248.2.74 'birdc show protocols'
-ssh root@45.76.29.217 'birdc show protocols'
-ssh root@144.202.40.220 'birdc show protocols'
-ssh root@207.246.91.55 'birdc show protocols'
+# Check BGP protocols on all nodes (updated IPs)
+ssh root@149.248.2.74 'birdc show protocols'    # LAX route reflector
+ssh root@45.76.17.217 'birdc show protocols'    # ORD secondary
+ssh root@207.246.76.162 'birdc show protocols'  # MIA tertiary  
+ssh root@108.61.157.169 'birdc show protocols'  # EWR quaternary
+
+# Check IPv6 route propagation
+ssh root@149.248.2.74 'birdc show route for 2620:71:4000::/48'
+
+# Verify dual-stack BGP sessions
+ssh root@45.76.17.217 'birdc show protocols vultr6'  # IPv6 BGP status
 ```
 
 ## Configuration Files
@@ -263,52 +280,67 @@ ssh root@NODE_IP 'curl http://149.248.2.74:5000/api/v1/status'
 
 ### 🔒 Security Enhancements
 1. **HTTPS/TLS for Service Discovery**
-   - Implement SSL certificates for encrypted API communication
-   - Use Let's Encrypt or internal CA for certificate management
-   - Add API authentication tokens for enhanced security
+   - **Priority: HIGH** - Implement SSL certificates for encrypted API communication
+   - Use Let's Encrypt or internal CA for certificate management  
+   - Add API authentication tokens with JWT/OAuth2 for enhanced security
+   - Implement certificate rotation and monitoring
 
 2. **BGP Security Hardening**
-   - Implement RPKI validation with ROA checking
+   - **Priority: HIGH** - Implement RPKI validation with ROA checking
    - Add ASPA (Autonomous System Provider Authorization) validation
    - Configure BGP communities for traffic engineering and DDoS mitigation
-   - Enable BGP session encryption where supported
+   - Enable BGP session encryption where supported (TCP-AO, IPSec)
+   - Implement route origin validation and path validation
 
 3. **Access Control Improvements**
-   - Implement role-based access control (RBAC) for API endpoints
-   - Add audit logging for all configuration changes
-   - Integrate with centralized authentication systems (LDAP/SAML)
-   - Implement network segmentation with VLANs
+   - **Priority: MEDIUM** - Implement role-based access control (RBAC) for API endpoints
+   - Add comprehensive audit logging for all configuration changes
+   - Integrate with centralized authentication systems (LDAP/SAML/SSO)
+   - Implement network segmentation with VLANs and microsegmentation
+   - Deploy SSH key management and rotation policies
 
-4. **Monitoring & Alerting**
-   - Deploy Prometheus + Grafana for metrics collection
-   - Implement BGP session monitoring with alerting
-   - Add network latency and performance monitoring
+4. **DDoS Protection & Traffic Engineering**
+   - **Priority: HIGH** - Implement RTBH (Remotely Triggered Black Hole) routing
+   - Configure advanced BGP communities for traffic steering
+   - Add rate limiting and traffic shaping capabilities
+   - Implement automated DDoS detection and mitigation
+   - Deploy anycast DNS for additional resilience
+
+5. **Monitoring & Alerting**
+   - **Priority: MEDIUM** - Deploy Prometheus + Grafana for metrics collection
+   - Implement real-time BGP session monitoring with PagerDuty/Slack alerts
+   - Add network latency, packet loss, and performance monitoring
    - Configure automated incident response workflows
+   - Implement capacity planning and trending analysis
 
 ### 🚀 Resilience & Scalability
 1. **High Availability Service Discovery**
-   - Deploy service discovery API in active-passive cluster
-   - Implement database backend (PostgreSQL) for configuration storage
-   - Add load balancer for API endpoint redundancy
-   - Configure automated failover mechanisms
+   - **Priority: HIGH** - Deploy service discovery API in active-passive cluster
+   - Implement database backend (PostgreSQL/Redis) for configuration storage
+   - Add load balancer (HAProxy/NGINX) for API endpoint redundancy
+   - Configure automated failover mechanisms with health checks
+   - Implement cross-datacenter replication for disaster recovery
 
 2. **Multi-Provider Architecture**
-   - Extend service discovery to support AWS, GCP, Azure deployment
-   - Implement provider-agnostic node bootstrapping
-   - Add cross-provider BGP peering capabilities
-   - Create unified configuration management across providers
+   - **Priority: MEDIUM** - Extend service discovery to support AWS, GCP, Azure deployment
+   - Implement provider-agnostic node bootstrapping with unified cloud-init
+   - Add cross-provider BGP peering capabilities for redundancy
+   - Create unified configuration management across multiple cloud providers
+   - Implement cost optimization across providers
 
 3. **Geographic Expansion**
-   - Add support for additional regions and providers
-   - Implement automatic region selection based on latency
-   - Configure geographic load balancing for optimal performance
-   - Add support for edge PoP deployments
+   - **Priority: MEDIUM** - Add support for additional regions (Asia-Pacific, Europe)
+   - Implement automatic region selection based on RTT and performance metrics
+   - Configure geographic load balancing for optimal user experience
+   - Add support for edge PoP deployments and CDN integration
+   - Implement intelligent traffic routing based on geolocation
 
-4. **Automated Operations**
-   - Implement Infrastructure as Code (IaC) with Terraform
-   - Add automated disaster recovery procedures
-   - Configure self-healing mechanisms for failed nodes
-   - Implement automated scaling based on traffic patterns
+4. **Automated Operations & Self-Healing**
+   - **Priority: HIGH** - Implement Infrastructure as Code (IaC) with Terraform
+   - Add automated disaster recovery procedures with RTO/RPO targets
+   - Configure self-healing mechanisms for failed BGP sessions and nodes
+   - Implement automated scaling based on traffic patterns and resource utilization
+   - Deploy chaos engineering for resilience testing
 
 ### 🌐 Service Layer Features
 1. **BGP Looking Glass Deployment**

@@ -321,9 +321,11 @@ write_files:
         };
       }
       
-      # Only configure IPv6 BGP if we have a global IPv6 address
-      \$(if [ -n "\$EXTERNAL_IPV6" ]; then
-      echo 'protocol bgp vultr6 {
+      # Configure IPv6 BGP if we have a global IPv6 address
+      if [ -n "\$EXTERNAL_IPV6" ]; then
+        cat >> /etc/bird/vultr.conf << IPVEOF
+      
+      protocol bgp vultr6 {
         description "Vultr IPv6 BGP";
         local as OUR_ASN;
         source address LOCAL_IPV6;
@@ -339,10 +341,11 @@ write_files:
           };
           next hop self;
         };
-      }'
+      }
+      IPVEOF
       else
-      echo '# IPv6 BGP disabled - no global IPv6 address available'
-      fi)
+        echo "# IPv6 BGP disabled - no global IPv6 address available" >> /etc/bird/vultr.conf
+      fi
       EOF
       
       # iBGP configuration
