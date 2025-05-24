@@ -1,0 +1,61 @@
+version: '3.8'
+
+networks:
+  proxy:
+    name: proxy
+
+services:
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    restart: unless-stopped
+    networks:
+      - proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/traefik:/etc/traefik
+      - /var/www/acme:/var/www/acme
+    command:
+      - "--configfile=/etc/traefik/traefik.yaml"
+    
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    networks:
+      - proxy
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    
+  hyperglass:
+    image: ghcr.io/thatmattlove/hyperglass:latest
+    container_name: hyperglass
+    restart: unless-stopped
+    networks:
+      - proxy
+    ports:
+      - "8080:8080"  # Expose to other nodes
+    volumes:
+      - /etc/hyperglass/hyperglass.yaml:/app/hyperglass.yaml:ro
+      - /etc/hyperglass/data:/app/data
+      - /usr/local/bin/hyperglass-bird:/usr/local/bin/hyperglass-bird:ro
+      - /var/run/bird:/var/run/bird
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hyperglass.rule=Host(`lg.infinitum-nihil.com`)"
+      - "traefik.http.routers.hyperglass.entrypoints=websecure"
+      - "traefik.http.routers.hyperglass.tls=true"
+      - "traefik.http.routers.hyperglass.tls.certresolver=letsencrypt"
+      - "traefik.http.services.hyperglass.loadbalancer.server.port=8080"
+
+volumes:
+  redis-data:

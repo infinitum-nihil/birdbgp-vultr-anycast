@@ -1,0 +1,8 @@
+#\!/bin/bash
+# Simple proxy script for BIRD
+if [[ "$2" == "show" || "$2" == "show protocol" || "$2" == "show protocols" ]]; then
+  birdc "$2 $3 $4 $5"
+else
+  echo "Error: Command not allowed"
+  exit 1
+fi

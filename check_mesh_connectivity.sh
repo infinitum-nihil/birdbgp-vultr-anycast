@@ -4,7 +4,7 @@
 set -e
 
 # Configuration
-SSH_KEY_PATH="$HOME/.ssh/id_rsa"  # Adjust as needed
+SSH_KEY_PATH="$HOME/.ssh/id_ed25519_nt_infinitum-nihil_com"  # Using correct key for nt@infinitum-nihil.com
 
 # Server details
 declare -A SERVER_IPS=(
@@ -14,12 +14,12 @@ declare -A SERVER_IPS=(
   ["ord"]="66.42.113.101"
 )
 
-# WireGuard IPs
+# WireGuard IPs - based on geographic proximity to LA headquarters
 declare -A WG_IPS=(
-  ["lax"]="10.10.10.1"
-  ["ewr"]="10.10.10.2"
-  ["mia"]="10.10.10.3"
-  ["ord"]="10.10.10.4"
+  ["lax"]="10.10.10.1"  # Primary - Los Angeles (HQ)
+  ["ord"]="10.10.10.2"  # Secondary - Chicago (closest to LA)
+  ["mia"]="10.10.10.3"  # Tertiary - Miami (farther from LA)
+  ["ewr"]="10.10.10.4"  # Quaternary - Newark (farthest from LA)
 )
 
 # Colors for output

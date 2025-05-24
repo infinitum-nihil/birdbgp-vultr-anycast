@@ -1,0 +1,26 @@
+#\!/bin/bash
+
+# Simple proxy for Hyperglass to execute BIRD commands
+# Created: 2025-05-23
+
+# Commands allowed for security
+ALLOWED_COMMANDS=("show protocol" "show protocols" "show route" "show route for" "show route where" "show symbols")
+
+COMMAND="$*"
+FIRST_WORD=$(echo $COMMAND  < /dev/null |  awk '{print $1}')
+SECOND_WORD=$(echo $COMMAND | awk '{print $2}')
+
+# Check if command is allowed
+if [[ "$FIRST_WORD" == "show" ]]; then
+  # Use appropriate socket for IPv4/IPv6
+  if [[ "$*" == *"::"* ]]; then
+    # IPv6 command
+    birdc -s /var/run/bird/bird6.ctl "$@"
+  else
+    # IPv4 command
+    birdc -s /var/run/bird/bird.ctl "$@"
+  fi
+else
+  echo "Error: Command not allowed for security reasons"
+  exit 1
+fi

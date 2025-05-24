@@ -1,0 +1,35 @@
+#\!/bin/bash
+
+SOCKET_DIR="/var/run/bird"
+BIRD_SOCK="$SOCKET_DIR/bird.ctl"
+BIRD6_SOCK="$SOCKET_DIR/bird6.ctl"
+
+# Function to handle both IPv4 and IPv6 BIRD commands
+execute_bird_command() {
+    local sock=$1
+    local cmd=$2
+    
+    # Execute the command
+    birdc -s "$sock" "$cmd"
+}
+
+# Check which sockets exist
+if [[ -e "$BIRD_SOCK" ]] && [[ -e "$BIRD6_SOCK" ]]; then
+    # Dual-stack mode
+    if [[ "$1" == *":" ]]; then
+        # IPv6 command
+        execute_bird_command "$BIRD6_SOCK" "$2"
+    else
+        # IPv4 command
+        execute_bird_command "$BIRD_SOCK" "$2"
+    fi
+elif [[ -e "$BIRD_SOCK" ]]; then
+    # IPv4 only
+    execute_bird_command "$BIRD_SOCK" "$2"
+elif [[ -e "$BIRD6_SOCK" ]]; then
+    # IPv6 only
+    execute_bird_command "$BIRD6_SOCK" "$2"
+else
+    echo "Error: No BIRD sockets found at $SOCKET_DIR"
+    exit 1
+fi

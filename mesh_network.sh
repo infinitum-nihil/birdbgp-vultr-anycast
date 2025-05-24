@@ -234,10 +234,10 @@ protocol bgp ibgp_${peer} from ibgp_clients {
     # Non-route-reflector configuration (client)
     local ibgp_content="# iBGP Configuration for mesh network
 
-# iBGP Client Configuration
+# iBGP Client Configuration - pointing to LAX as route reflector
 protocol bgp ibgp_rr {
   local as ${OUR_AS};
-  neighbor 10.10.10.4 as ${OUR_AS};
+  neighbor 10.10.10.1 as ${OUR_AS};  # LAX is now 10.10.10.1
   next hop self;
   direct;
   igp table master;
@@ -414,7 +414,7 @@ networks:
       username: ""
       password: ""
     connection:
-      device: 10.10.10.4
+      device: 10.10.10.1  # LAX is now 10.10.10.1
       port: 179
     proxy:
       command: "birdc"
@@ -452,7 +452,7 @@ networks:
       username: ""
       password: ""
     connection:
-      device: 10.10.10.1
+      device: 10.10.10.4  # EWR is now 10.10.10.4
       port: 179
     proxy:
       command: "birdc"
@@ -490,7 +490,7 @@ networks:
       username: ""
       password: ""
     connection:
-      device: 10.10.10.2
+      device: 10.10.10.3  # MIA is now 10.10.10.3
       port: 179
     proxy:
       command: "birdc"
@@ -528,7 +528,7 @@ networks:
       username: ""
       password: ""
     connection:
-      device: 10.10.10.3
+      device: 10.10.10.2  # ORD is now 10.10.10.2
       port: 179
     proxy:
       command: "birdc"
@@ -676,12 +676,12 @@ create_route_monitoring() {
   local monitor_script=$(cat <<'EOF'
 #!/bin/bash
 
-# Define BGP speaker details
+# Define BGP speaker details with corrected IPs based on geographic proximity
 declare -A servers=(
-  ["ewr"]="10.10.10.1"
-  ["mia"]="10.10.10.2"
-  ["ord"]="10.10.10.3"
-  ["lax"]="10.10.10.4"
+  ["lax"]="10.10.10.1"  # Primary - Los Angeles (HQ)
+  ["ord"]="10.10.10.2"  # Secondary - Chicago (closest to LA)
+  ["mia"]="10.10.10.3"  # Tertiary - Miami (farther from LA)
+  ["ewr"]="10.10.10.4"  # Quaternary - Newark (farthest from LA)
 )
 
 # Output file for API access
@@ -801,12 +801,12 @@ verify_mesh_network() {
 
 # Main script execution
 
-# Define server IDs for WireGuard IPs
+# Define server IDs for WireGuard IPs based on geographic proximity to LA headquarters
 declare -A SERVER_IDS=(
-  ["ewr"]="1"
-  ["mia"]="2"
-  ["ord"]="3"
-  ["lax"]="4"
+  ["lax"]="1"  # Primary - Los Angeles (HQ)
+  ["ord"]="2"  # Secondary - Chicago (closest to LA)
+  ["mia"]="3"  # Tertiary - Miami (farther from LA)
+  ["ewr"]="4"  # Quaternary - Newark (farthest from LA)
 )
 
 # Array to store public keys
@@ -857,10 +857,10 @@ echo "  $lg_domain -> ${RESERVED_IPS["lax"]} (IPv4)"
 echo "  $lg_domain -> ${IPV6_IPS["lax"]} (IPv6)"
 echo ""
 echo "The mesh network uses the following IPs:"
-echo "  EWR: 10.10.10.1 (Public IP: ${PUBLIC_IPS["ewr"]})"
-echo "  MIA: 10.10.10.2 (Public IP: ${PUBLIC_IPS["mia"]})"
-echo "  ORD: 10.10.10.3 (Public IP: ${PUBLIC_IPS["ord"]})"
-echo "  LAX: 10.10.10.4 (Public IP: ${PUBLIC_IPS["lax"]})"
+echo "  LAX: 10.10.10.1 (Public IP: ${PUBLIC_IPS["lax"]}, Reserved IP: ${RESERVED_IPS["lax"]})"
+echo "  ORD: 10.10.10.2 (Public IP: ${PUBLIC_IPS["ord"]}, Reserved IP: ${RESERVED_IPS["ord"]})"
+echo "  MIA: 10.10.10.3 (Public IP: ${PUBLIC_IPS["mia"]}, Reserved IP: ${RESERVED_IPS["mia"]})"
+echo "  EWR: 10.10.10.4 (Public IP: ${PUBLIC_IPS["ewr"]}, Reserved IP: ${RESERVED_IPS["ewr"]})"
 echo ""
 echo "For detailed logs, see: $LOG_FILE"
 echo "=============================================================================="

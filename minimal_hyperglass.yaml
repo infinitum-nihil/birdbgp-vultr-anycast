@@ -1,0 +1,30 @@
+# Minimal Hyperglass configuration
+debug: false
+hyperglass:
+  listen_address: 0.0.0.0
+  listen_port: 8080
+  log_level: info
+
+devices:
+  - name: lax1
+    display_name: "Los Angeles (LAX)"
+    address: localhost
+    credential:
+      type: subprocess
+      command: /usr/local/bin/hyperglass-bird
+    platform: bird
+    location:
+      lat: 34.0522
+      lon: -118.2437
+
+redis:
+  host: redis
+  port: 6379
+  
+cache:
+  timeout: 3600
+
+asn: 27218
+org_name: "Infinitum Nihil, LLC"
+site_title: "27218 Infinitum Nihil LG"
+site_description: "BGP Looking Glass for AS27218 Infinitum Nihil Network"

@@ -1,0 +1,31 @@
+version: '3.8'
+
+networks:
+  lg_network:
+    driver: bridge
+
+services:
+  bird-proxy:
+    image: alpine:latest
+    container_name: bird-proxy
+    restart: unless-stopped
+    command: sh -c "apk add --no-cache bird && birdc show protocols"
+    volumes:
+      - /var/run/bird:/var/run/bird
+    networks:
+      - lg_network
+
+  looking-glass:
+    image: pierky/bird-looking-glass:latest
+    container_name: looking-glass
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - PAGE_TITLE=AS27218 Infinitum Nihil Looking Glass
+      - PAGE_DESC=This service provides real-time visibility into our global BGP routing infrastructure.
+    depends_on:
+      - bird-proxy
+    networks:
+      - lg_network

@@ -1,0 +1,125 @@
+devices:
+  - name: lax1
+    display_name: "Los Angeles (LAX)"
+    address: localhost
+    credential:
+      type: subprocess
+      command: /usr/local/bin/hyperglass-bird
+    platform: bird
+    network: "Infinitum Nihil"
+    location:
+      lat: 34.0522
+      lon: -118.2437
+    vrf:
+      - name: default
+        display_name: "Global Table"
+        ipv4:
+          source: 149.248.2.74
+        ipv6:
+          source: "2001:19f0:6001:48e4:5400:02ff:fe9a:1c2e"
+    
+  - name: ewr1
+    display_name: "New Jersey (EWR)"
+    address: 66.135.18.138
+    credential:
+      type: http
+      base_url: http://66.135.18.138:8080
+    platform: bird
+    network: "Infinitum Nihil"
+    location:
+      lat: 40.6895
+      lon: -74.1745
+    vrf:
+      - name: default
+        display_name: "Global Table"
+        ipv4:
+          source: 66.135.18.138
+        ipv6:
+          source: "2001:19f0:0007:2b32:5400:02ff:fe9a:1c3e"
+    
+  - name: mia1
+    display_name: "Miami (MIA)"
+    address: 149.28.108.180
+    credential:
+      type: http
+      base_url: http://149.28.108.180:8080
+    platform: bird
+    network: "Infinitum Nihil"
+    location:
+      lat: 25.7617
+      lon: -80.1918
+    vrf:
+      - name: default
+        display_name: "Global Table"
+        ipv4:
+          source: 149.28.108.180
+        ipv6:
+          source: "2001:19f0:9001:2bb2:5400:02ff:fe9a:1c4f"
+    
+  - name: ord1
+    display_name: "Chicago (ORD)"
+    address: 66.42.113.101
+    credential:
+      type: http
+      base_url: http://66.42.113.101:8080
+    platform: bird
+    network: "Infinitum Nihil"
+    location:
+      lat: 41.8781
+      lon: -87.6298
+    vrf:
+      - name: default
+        display_name: "Global Table"
+        ipv4:
+          source: 66.42.113.101
+        ipv6:
+          source: "2001:19f0:5c01:24a8:5400:02ff:fe9a:1c5a"
+
+docs:
+  enable: true
+
+asn: 27218
+org_name: "Infinitum Nihil, LLC"
+site_title: "27218 Infinitum Nihil LG"
+site_description: "BGP Looking Glass for AS27218 Infinitum Nihil Network"
+base_url: "https://lg.infinitum-nihil.com"
+
+cache:
+  timeout: 3600
+  custom_timeout:
+    bgp_route: 300
+    bgp_community: 600
+    bgp_aspath: 600
+    ping: 30
+    traceroute: 30
+
+info_title: "Welcome to the AS27218 Infinitum Nihil Looking Glass"
+info_text: |
+  This service provides real-time visibility into our global BGP routing infrastructure.
+  You are currently connected to our **Los Angeles** node.
+  
+  ## Network Information
+  - **ASN**: 27218
+  - **Network**: Infinitum Nihil, LLC
+  - **IPv4**: 192.30.120.0/23
+  - **IPv6**: 2620:71:4000::/48
+
+hyperglass:
+  debug: false
+  listen_address: 0.0.0.0
+  listen_port: 8080
+  log_level: info
+  external_link_mode: icon
+  cache_timeout: 600
+
+logo_url: "https://bimi.infinitum-nihil.com/image/logo.svg"
+
+ui:
+  title: "27218 Infinitum Nihil LG"
+  theme:
+    colors:
+      primary: "#0064c1"
+      secondary: "#00c187"
+    text:
+      light: "#ffffff"
+      dark: "#444444"
